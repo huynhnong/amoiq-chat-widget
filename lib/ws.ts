@@ -12,6 +12,14 @@ export interface WebSocketCallbacks {
   onError?: (error: Error) => void;
 }
 
+export interface WebsiteInfo {
+  domain?: string;
+  origin?: string;
+  url?: string;
+  referrer?: string;
+  siteId?: string;
+}
+
 export class ChatWebSocket {
   private tenantId: string;
   private socket: Socket | null = null;
@@ -20,10 +28,12 @@ export class ChatWebSocket {
   private maxReconnectAttempts = 5;
   private shouldReconnect = true;
   private wsUrl: string;
+  private websiteInfo: WebsiteInfo;
 
-  constructor(tenantId: string, callbacks: WebSocketCallbacks = {}) {
+  constructor(tenantId: string, callbacks: WebSocketCallbacks = {}, websiteInfo?: WebsiteInfo) {
     this.tenantId = tenantId;
     this.callbacks = callbacks;
+    this.websiteInfo = websiteInfo || this.getWebsiteInfo();
     
     // Determine WebSocket URL
     const wsUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || process.env.NEXT_PUBLIC_WS_URL;
@@ -32,11 +42,27 @@ export class ChatWebSocket {
       // Socket.io works with http/https URLs, it handles the protocol
       this.wsUrl = wsUrl.replace(/^wss?:/, 'https:').replace(/^ws:/, 'http:');
     } else {
-      // Default fallback
-      this.wsUrl = 'https://api.amoiq.com';
+      // Default fallback - use gateway URL if available, otherwise default
+      const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL || process.env.NEXT_PUBLIC_API_URL;
+      this.wsUrl = gatewayUrl ? gatewayUrl.replace(/^https?:/, 'https:') : 'https://api-gateway-dfcflow.fly.dev';
     }
     
     this.connect();
+  }
+
+  /**
+   * Auto-detect website information from browser
+   */
+  private getWebsiteInfo(): WebsiteInfo {
+    if (typeof window !== 'undefined') {
+      return {
+        domain: window.location.hostname,
+        origin: window.location.origin,
+        url: window.location.href,
+        referrer: document.referrer || '',
+      };
+    }
+    return {};
   }
 
   private connect() {
@@ -119,6 +145,7 @@ export class ChatWebSocket {
       text,
       tenantId: this.tenantId,
       timestamp: new Date().toISOString(),
+      ...this.websiteInfo, // Include domain, origin, url, referrer, siteId
     };
 
     // Emit message event - adjust event name based on your server

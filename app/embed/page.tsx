@@ -20,6 +20,58 @@ export default function EmbedPage() {
   const wsRef = useRef<ChatWebSocket | null>(null);
   const apiRef = useRef<ChatAPI | null>(null);
 
+  /**
+   * Get website info from parent window or detect from current context
+   */
+  const getWebsiteInfo = (): { domain?: string; origin?: string; url?: string; referrer?: string; siteId?: string } => {
+    // Try to get from parent window (if embedded in iframe)
+    if (window.parent && window.parent !== window) {
+      try {
+        const parentOrigin = window.parent.location.origin;
+        const parentHostname = window.parent.location.hostname;
+        return {
+          domain: parentHostname,
+          origin: parentOrigin,
+          url: window.parent.location.href,
+          referrer: document.referrer || '',
+        };
+      } catch (e) {
+        // Cross-origin iframe - can't access parent, use URL params or postMessage
+        console.log('[Widget] Cross-origin iframe, using URL params for website info');
+      }
+    }
+
+    // Get from URL params (passed from widget loader)
+    const params = new URLSearchParams(window.location.search);
+    const siteId = params.get('siteId');
+    const domain = params.get('domain');
+    const origin = params.get('origin');
+    const url = params.get('url');
+    const referrer = params.get('referrer');
+
+    if (domain || origin || url) {
+      return {
+        domain: domain || undefined,
+        origin: origin || undefined,
+        url: url || undefined,
+        referrer: referrer || undefined,
+        siteId: siteId || undefined,
+      };
+    }
+
+    // Fallback: detect from current window (for direct access)
+    if (typeof window !== 'undefined') {
+      return {
+        domain: window.location.hostname,
+        origin: window.location.origin,
+        url: window.location.href,
+        referrer: document.referrer || '',
+      };
+    }
+
+    return {};
+  };
+
   useEffect(() => {
     // Get tenant ID from URL params (support both 'tenantId' and 'tenant')
     const params = new URLSearchParams(window.location.search);
@@ -33,10 +85,14 @@ export default function EmbedPage() {
 
     setTenantId(tid);
     
-    // Initialize API client
-    apiRef.current = new ChatAPI(tid);
+    // Get website info
+    const websiteInfo = getWebsiteInfo();
+    console.log('[Widget] Website info:', websiteInfo);
     
-    // Initialize WebSocket
+    // Initialize API client with website info
+    apiRef.current = new ChatAPI(tid, websiteInfo);
+    
+    // Initialize WebSocket with website info
     wsRef.current = new ChatWebSocket(tid, {
       onMessage: (message) => {
         setMessages((prev) => [...prev, message]);

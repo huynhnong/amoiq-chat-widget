@@ -56,6 +56,7 @@ Add these two script tags to your HTML page (before the closing `</body>` tag):
   - `"top-right"`
   - `"top-left"`
 - **`baseUrl`** (string): Override widget server URL (default: auto-detected)
+- **`siteId`** (string): Optional site identifier for multi-site tenants. If not provided, the widget automatically detects the domain from the current website.
 
 ### Example with All Options
 
@@ -64,7 +65,8 @@ Add these two script tags to your HTML page (before the closing `</body>` tag):
   window.ChatWidgetConfig = {
     tenantId: "my-company-123",
     position: "bottom-right",
-    baseUrl: "https://webchat.amoiq.com"  // Optional
+    baseUrl: "https://webchat.amoiq.com",  // Optional
+    siteId: "site-456"                     // Optional: for multi-site tenants
   };
 </script>
 <script src="https://webchat.amoiq.com/widget.v1.0.0.js" async></script>

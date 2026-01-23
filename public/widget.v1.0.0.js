@@ -96,7 +96,27 @@
     const iframe = document.createElement('iframe');
     iframe.id = 'amoiq-widget-iframe';
     const baseUrl = config.baseUrl || getBaseUrl();
-    iframe.src = `${baseUrl}/embed?tenantId=${encodeURIComponent(tenantId)}`;
+    
+    // Build URL with tenantId and website info
+    const urlParams = new URLSearchParams();
+    urlParams.set('tenantId', tenantId);
+    
+    // Add website info from current page
+    if (typeof window !== 'undefined') {
+      urlParams.set('domain', window.location.hostname);
+      urlParams.set('origin', window.location.origin);
+      urlParams.set('url', window.location.href);
+      if (document.referrer) {
+        urlParams.set('referrer', document.referrer);
+      }
+    }
+    
+    // Add optional siteId from config if provided
+    if (config.siteId) {
+      urlParams.set('siteId', config.siteId);
+    }
+    
+    iframe.src = `${baseUrl}/embed?${urlParams.toString()}`;
     iframe.style.cssText = `
       width: 380px;
       height: 600px;

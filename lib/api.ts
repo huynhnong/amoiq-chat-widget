@@ -3,7 +3,7 @@
  * Handles HTTP requests to the chat API
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || process.env.NEXT_PUBLIC_API_URL || 'https://api.amoiq.com';
+const API_BASE_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || process.env.NEXT_PUBLIC_API_URL || 'https://api-gateway-dfcflow.fly.dev';
 
 export interface Message {
   id: string;
@@ -18,13 +18,38 @@ export interface SendMessageResponse {
   error?: string;
 }
 
+export interface WebsiteInfo {
+  domain?: string;
+  origin?: string;
+  url?: string;
+  referrer?: string;
+  siteId?: string;
+}
+
 export class ChatAPI {
   private tenantId: string;
   private baseUrl: string;
+  private websiteInfo: WebsiteInfo;
 
-  constructor(tenantId: string) {
+  constructor(tenantId: string, websiteInfo?: WebsiteInfo) {
     this.tenantId = tenantId;
     this.baseUrl = API_BASE_URL;
+    this.websiteInfo = websiteInfo || this.getWebsiteInfo();
+  }
+
+  /**
+   * Auto-detect website information from browser
+   */
+  private getWebsiteInfo(): WebsiteInfo {
+    if (typeof window !== 'undefined') {
+      return {
+        domain: window.location.hostname,
+        origin: window.location.origin,
+        url: window.location.href,
+        referrer: document.referrer || '',
+      };
+    }
+    return {};
   }
 
   /**
@@ -74,12 +99,13 @@ export class ChatAPI {
    */
   async sendMessage(text: string): Promise<SendMessageResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/chat/messages`, {
+      const response = await fetch(`${this.baseUrl}/webchat/message`, {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify({
           text,
           tenantId: this.tenantId,
+          ...this.websiteInfo, // Include domain, origin, url, referrer, siteId
         }),
       });
 
