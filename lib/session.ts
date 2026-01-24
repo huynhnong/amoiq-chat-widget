@@ -33,6 +33,9 @@ function generateBrowserFingerprint(): string {
     return 'unknown';
   }
 
+  // Type assertion for deviceMemory (not in standard Navigator type but available in some browsers)
+  const nav = navigator as any;
+
   const components: string[] = [
     navigator.userAgent || '',
     navigator.language || '',
@@ -42,7 +45,7 @@ function generateBrowserFingerprint(): string {
     new Date().getTimezoneOffset().toString(),
     navigator.platform || '',
     navigator.hardwareConcurrency?.toString() || '',
-    navigator.deviceMemory?.toString() || '',
+    nav.deviceMemory?.toString() || '',
   ];
 
   // Create a hash-like string
