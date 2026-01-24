@@ -10,6 +10,7 @@ export interface Message {
   text: string;
   sender: 'user' | 'bot' | 'agent';
   timestamp: string;
+  deliveryStatus?: 'pending' | 'delivered' | 'failed';
 }
 
 export interface SendMessageResponse {
@@ -24,6 +25,15 @@ export interface WebsiteInfo {
   url?: string;
   referrer?: string;
   siteId?: string;
+}
+
+export interface OnlineUser {
+  userId: string;
+  sessionId?: string;
+  connectedAt: string;
+  domain?: string;
+  origin?: string;
+  url?: string;
 }
 
 export class ChatAPI {
@@ -149,6 +159,29 @@ export class ChatAPI {
     } catch (error) {
       console.error('Error initializing session:', error);
       return null;
+    }
+  }
+
+  /**
+   * Get list of online users for the tenant
+   * Requires admin authentication
+   */
+  async getOnlineUsers(): Promise<OnlineUser[]> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/chat/online-users?tenantId=${this.tenantId}`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch online users: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.users || [];
+    } catch (error) {
+      console.error('Error fetching online users:', error);
+      return [];
     }
   }
 }

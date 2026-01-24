@@ -5,11 +5,23 @@
 
 import { io, Socket } from 'socket.io-client';
 
+export interface OnlineUser {
+  userId: string;
+  sessionId?: string;
+  connectedAt: string;
+  domain?: string;
+  origin?: string;
+  url?: string;
+}
+
 export interface WebSocketCallbacks {
   onMessage?: (message: any) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
   onError?: (error: Error) => void;
+  onUserOnline?: (user: OnlineUser) => void;
+  onUserOffline?: (userId: string) => void;
+  onOnlineUsersList?: (users: OnlineUser[]) => void;
 }
 
 export interface WebsiteInfo {
@@ -29,11 +41,13 @@ export class ChatWebSocket {
   private shouldReconnect = true;
   private wsUrl: string;
   private websiteInfo: WebsiteInfo;
+  private isAdmin: boolean;
 
-  constructor(tenantId: string, callbacks: WebSocketCallbacks = {}, websiteInfo?: WebsiteInfo) {
+  constructor(tenantId: string, callbacks: WebSocketCallbacks = {}, websiteInfo?: WebsiteInfo, isAdmin: boolean = false) {
     this.tenantId = tenantId;
     this.callbacks = callbacks;
     this.websiteInfo = websiteInfo || this.getWebsiteInfo();
+    this.isAdmin = isAdmin;
     
     // Determine WebSocket URL
     const wsUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || process.env.NEXT_PUBLIC_WS_URL;
@@ -76,9 +90,11 @@ export class ChatWebSocket {
         transports: ['websocket', 'polling'],
         query: {
           tenantId: this.tenantId,
+          ...(this.isAdmin && { role: 'admin' }),
         },
         auth: {
           token: apiKey,
+          ...(this.isAdmin && { role: 'admin' }),
         },
         reconnection: true,
         reconnectionAttempts: this.maxReconnectAttempts,
@@ -120,10 +136,44 @@ export class ChatWebSocket {
         }
       });
 
+      // Listen for presence events (online users tracking)
+      this.socket.on('user_online', (data: any) => {
+        console.log('[Socket.io] User online:', data);
+        if (data.userId) {
+          this.callbacks.onUserOnline?.({
+            userId: data.userId,
+            sessionId: data.sessionId,
+            connectedAt: data.connectedAt || new Date().toISOString(),
+            domain: data.domain,
+            origin: data.origin,
+            url: data.url,
+          });
+        }
+      });
+
+      this.socket.on('user_offline', (data: any) => {
+        console.log('[Socket.io] User offline:', data);
+        const userId = typeof data === 'string' ? data : data?.userId;
+        if (userId) {
+          this.callbacks.onUserOffline?.(userId);
+        }
+      });
+
+      this.socket.on('online_users_list', (data: any) => {
+        console.log('[Socket.io] Online users list received:', data);
+        const users = data.users || data || [];
+        this.callbacks.onOnlineUsersList?.(users);
+      });
+
       // Join conversation room if needed
       this.socket.on('connect', () => {
         // You might need to join a room based on your server's requirements
         // this.socket?.emit('join', { tenantId: this.tenantId });
+        
+        // If admin, request initial online users list
+        if (this.isAdmin) {
+          this.requestOnlineUsers();
+        }
       });
 
     } catch (error) {
@@ -168,5 +218,20 @@ export class ChatWebSocket {
    */
   isConnected(): boolean {
     return this.socket?.connected || false;
+  }
+
+  /**
+   * Request list of online users from server
+   * Only works for admin connections
+   */
+  requestOnlineUsers(): void {
+    if (!this.socket || !this.socket.connected) {
+      console.warn('[Socket.io] Cannot request online users: not connected');
+      return;
+    }
+
+    this.socket.emit('get_online_users', {
+      tenantId: this.tenantId,
+    });
   }
 }

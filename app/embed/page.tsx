@@ -95,7 +95,46 @@ export default function EmbedPage() {
     // Initialize WebSocket with website info
     wsRef.current = new ChatWebSocket(tid, {
       onMessage: (message) => {
-        setMessages((prev) => [...prev, message]);
+        setMessages((prev) => {
+          // If message has an ID, try to update existing message (for delivery status)
+          if (message.id) {
+            const existingIndex = prev.findIndex((m) => m.id === message.id);
+            if (existingIndex >= 0) {
+              // Update existing message (mark as delivered)
+              const updated = [...prev];
+              updated[existingIndex] = {
+                ...updated[existingIndex],
+                ...message,
+                deliveryStatus: 'delivered' as const,
+              };
+              return updated;
+            }
+          }
+
+          // Try to match by text content and sender (for user messages that need status update)
+          if (message.sender === 'user' && message.text) {
+            const pendingUserMessage = prev.find(
+              (m) => 
+                m.sender === 'user' && 
+                m.text === message.text && 
+                m.deliveryStatus === 'pending' &&
+                // Match messages within last 30 seconds
+                Math.abs(new Date(m.timestamp).getTime() - new Date(message.timestamp || Date.now()).getTime()) < 30000
+            );
+            
+            if (pendingUserMessage) {
+              // Update the pending message with the real ID and mark as delivered
+              return prev.map((m) => 
+                m.id === pendingUserMessage.id
+                  ? { ...message, deliveryStatus: 'delivered' as const }
+                  : m
+              );
+            }
+          }
+
+          // New message from server (agent/bot response or unmatched user message)
+          return [...prev, { ...message, deliveryStatus: 'delivered' as const }];
+        });
       },
       onConnect: () => {
         setIsConnected(true);
@@ -138,37 +177,47 @@ export default function EmbedPage() {
     const messageText = inputValue.trim();
     setInputValue('');
 
-    // Optimistically add user message
+    const tempId = `temp-${Date.now()}`;
+    const now = new Date().toISOString();
+
+    // Optimistically add user message with pending status
     const userMessage: Message = {
-      id: `temp-${Date.now()}`,
+      id: tempId,
       text: messageText,
       sender: 'user',
-      timestamp: new Date().toISOString(),
+      timestamp: now,
+      deliveryStatus: 'pending',
     };
     setMessages((prev) => [...prev, userMessage]);
 
     try {
-      // Try WebSocket first if connected
-      if (wsRef.current && isConnected) {
-        await wsRef.current.sendMessage(messageText);
+      // Always use HTTP POST to gateway (goes through Redis Stream → Worker)
+      const response = await apiRef.current.sendMessage(messageText);
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to send message');
+      }
+
+      // If API returns a message with ID, update the temp message
+      if (response.message && response.message.id) {
+        setMessages((prev) => {
+          const filtered = prev.filter((m) => m.id !== tempId);
+          return [...filtered, {
+            ...response.message!,
+            deliveryStatus: 'pending' as const, // Still pending until WebSocket confirms
+          }];
+        });
       } else {
-        // Fallback to HTTP API if WebSocket not available
-        const response = await apiRef.current.sendMessage(messageText);
-        if (!response.success) {
-          throw new Error(response.error || 'Failed to send message');
-        }
-        // Replace temp message with real one from API
-        if (response.message) {
-          setMessages((prev) => {
-            const filtered = prev.filter((m) => m.id !== userMessage.id);
-            return [...filtered, response.message!];
-          });
-        }
+        // Keep temp message, will be updated when WebSocket receives confirmation
+        // Status remains 'pending' until meta_message_created event
       }
     } catch (error) {
       console.error('Failed to send message:', error);
-      // Remove optimistic message on error
-      setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
+      // Update message status to failed
+      setMessages((prev) => {
+        return prev.map((m) => 
+          m.id === tempId ? { ...m, deliveryStatus: 'failed' as const } : m
+        );
+      });
     }
   };
 
@@ -227,11 +276,20 @@ export default function EmbedPage() {
               }`}
             >
               <div className={styles.messageContent}>{message.text}</div>
-              <div className={styles.messageTime}>
-                {new Date(message.timestamp).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
+              <div className={styles.messageMeta}>
+                <div className={styles.messageTime}>
+                  {new Date(message.timestamp).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </div>
+                {message.sender === 'user' && message.deliveryStatus && (
+                  <div className={styles.messageStatus}>
+                    {message.deliveryStatus === 'pending' && '⏳'}
+                    {message.deliveryStatus === 'delivered' && '✓'}
+                    {message.deliveryStatus === 'failed' && '✗'}
+                  </div>
+                )}
               </div>
             </div>
           ))
@@ -272,5 +330,6 @@ interface Message {
   text: string;
   sender: 'user' | 'bot' | 'agent';
   timestamp: string;
+  deliveryStatus?: 'pending' | 'delivered' | 'failed';
 }
 

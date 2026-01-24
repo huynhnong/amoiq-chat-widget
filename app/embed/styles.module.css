@@ -125,19 +125,32 @@
   border-bottom-left-radius: 4px;
 }
 
-.messageTime {
-  font-size: 11px;
-  color: #9ca3af;
+.messageMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 4px;
   padding: 0 4px;
 }
 
-.messageUser .messageTime {
-  text-align: right;
+.messageUser .messageMeta {
+  justify-content: flex-end;
 }
 
-.messageBot .messageTime {
-  text-align: left;
+.messageBot .messageMeta {
+  justify-content: flex-start;
+}
+
+.messageTime {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.messageStatus {
+  font-size: 11px;
+  color: #9ca3af;
+  display: flex;
+  align-items: center;
 }
 
 .inputContainer {
