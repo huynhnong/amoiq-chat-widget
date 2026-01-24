@@ -114,10 +114,16 @@ amoiq-chat-widget/
 
 ## Documentation
 
-- **[SESSION_MANAGEMENT.md](./SESSION_MANAGEMENT.md)** - Complete guide to session management, user identification, and conversation continuity
-- **[ADMIN_INTEGRATION.md](./ADMIN_INTEGRATION.md)** - Admin online users integration guide
-- **[BACKEND_REQUIREMENTS.md](./BACKEND_REQUIREMENTS.md)** - Backend API requirements and endpoint specifications
-- **[EMBED_GUIDE.md](./EMBED_GUIDE.md)** - How to embed the widget on your website
+Complete documentation is available in the [`docs/`](./docs/) folder:
+
+- **[Getting Started](./docs/01-getting-started.md)** - Quick installation and setup
+- **[Backend Setup](./docs/02-backend-setup.md)** - Backend services setup guide
+- **[Session Management](./docs/03-session-management.md)** - Session handling and user identification
+- **[Admin Integration](./docs/04-admin-integration.md)** - Admin online users integration
+- **[Embedding Guide](./docs/05-embedding.md)** - How to embed the widget
+- **[API Reference](./docs/06-api-reference.md)** - Complete API documentation
+
+**Quick Start:** See [docs/README.md](./docs/README.md) for the full documentation index.
 
 ## Session Management
 
