@@ -50,6 +50,13 @@ Complete documentation for the Amoiq Chat Widget system.
 - Rate limiting
 - Best practices
 
+### 7. [System Flow Diagrams](./SYSTEM_FLOW.md)
+- Complete system flow diagram
+- Authentication flow sequence
+- Session management flow
+- Message flow comparison (HTTP vs WebSocket)
+- Architecture overview
+
 ## Quick Links
 
 - **Installation**: [Getting Started](./01-getting-started.md#quick-installation)
