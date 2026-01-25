@@ -245,9 +245,10 @@ export class ChatWebSocketNative {
       return;
     }
 
-    if (this.socket && this.socket.connecting) {
-      console.log('[Socket.IO] Already connecting');
-      return;
+    // Disconnect existing socket if it exists but is not connected
+    if (this.socket && !this.socket.connected) {
+      this.socket.disconnect();
+      this.socket = null;
     }
 
     try {
