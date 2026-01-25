@@ -525,6 +525,23 @@ export class ChatWebSocketNative {
         this.handleMessage(message);
       });
 
+      // Handle message:new events (alternative event name used by server)
+      this.socket.on('message:new', (data: any) => {
+        console.log('[Socket.IO] ✅ message:new event received:', data);
+        console.log('[Socket.IO] DEBUG - Event data structure:', {
+          has_message: !!data.message,
+          has_data: !!data,
+          data_keys: data ? Object.keys(data) : [],
+          data_type: typeof data,
+          is_array: Array.isArray(data),
+        });
+        // Transform message:new format to expected message format
+        const message = this.transformMessageNewToMessage(data);
+        console.log('[Socket.IO] DEBUG - Transformed message:', message);
+        console.log('[Socket.IO] DEBUG - Calling handleMessage with:', message);
+        this.handleMessage(message);
+      });
+
       // Handle AI event created events (optional, for AI responses)
       this.socket.on('ai_event_created', (data: any) => {
         console.log('[Socket.IO] AI event created:', data);
@@ -640,6 +657,29 @@ export class ChatWebSocketNative {
       console.error('[Socket.IO] Error creating connection:', error);
       this.callbacks.onError?.(error as Error);
     }
+  }
+
+  /**
+   * Transform message:new event format to standard message format
+   */
+  private transformMessageNewToMessage(data: any): any {
+    // message:new event has fields like: id, message_text, sender_type, sender_id, etc.
+    // Transform to expected message format
+    return {
+      id: data.id,
+      text: data.message_text || data.text,
+      sender: data.sender_type === 'user' ? 'user' : 'agent',
+      senderId: data.sender_id,
+      senderName: data.sender_name,
+      timestamp: data.created_at || data.inserted_at || data.timestamp || new Date().toISOString(),
+      conversation_id: data.conversation_id,
+      tenant_id: data.tenant_id,
+      status: data.status,
+      attachments: data.attachments,
+      metadata: data.metadata,
+      // Preserve all original fields
+      ...data,
+    };
   }
 
   /**
