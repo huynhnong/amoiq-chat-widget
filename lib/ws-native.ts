@@ -45,6 +45,7 @@ export interface ConversationInitResponse {
   visitor_id: string;
   ws_token: string;
   ws_server_url: string;
+  tenant_id: string;
   expires_in: number;
 }
 
@@ -207,12 +208,23 @@ export class ChatWebSocketNative {
       this.visitorId = data.visitor_id;
       this.wsToken = data.ws_token;
       this.wsServerUrl = data.ws_server_url;
+      // Extract tenant_id from response (Gateway should return it)
+      this.tenantId = data.tenant_id || this.tenantId;
 
       // Debug logging
       console.log('[Socket.IO] Conversation initialized:', {
         conversation_id: this.conversationId,
         visitor_id: this.visitorId,
+        tenant_id: this.tenantId,
         ws_server_url: this.wsServerUrl,
+        expires_in: data.expires_in,
+      });
+      console.log('[Socket.IO] DEBUG - Init response data:', {
+        conversation_id: data.conversation_id,
+        visitor_id: data.visitor_id,
+        tenant_id: data.tenant_id,
+        has_ws_token: !!data.ws_token,
+        has_ws_server_url: !!data.ws_server_url,
         expires_in: data.expires_in,
       });
       // Decode JWT token to see payload (without verification)
@@ -437,10 +449,23 @@ export class ChatWebSocketNative {
     const sessionInfo = getSessionInfo();
     refreshSession();
 
+    // tenantId is REQUIRED by the server - throw error if not available
+    if (!this.tenantId) {
+      const error = new Error('tenantId is required but not available. Make sure initialize() was called successfully and Gateway returned tenant_id.');
+      console.error('[Socket.IO] ERROR - Missing tenantId:', {
+        conversation_id: this.conversationId,
+        visitor_id: this.visitorId,
+        has_ws_token: !!this.wsToken,
+        has_ws_server_url: !!this.wsServerUrl,
+      });
+      throw error;
+    }
+
     // Prepare message payload according to Gateway plan
     const message: any = {
       type: 'message',
       text,
+      tenantId: this.tenantId,  // REQUIRED by server
       conversation_id: this.conversationId,
       visitor_id: this.visitorId,
       timestamp: new Date().toISOString(),
@@ -449,11 +474,6 @@ export class ChatWebSocketNative {
       ...this.websiteInfo,
     };
 
-    // Only add tenant_id if available
-    if (this.tenantId) {
-      message.tenant_id = this.tenantId;
-    }
-
     if (this.userId) {
       message.userId = this.userId;
       if (this.userInfo) {
@@ -461,11 +481,31 @@ export class ChatWebSocketNative {
       }
     }
 
+    // Debug logging - show full message payload
+    console.log('[Socket.IO] DEBUG - Sending message payload:', {
+      type: message.type,
+      text: message.text,
+      tenantId: message.tenantId,
+      conversation_id: message.conversation_id,
+      visitor_id: message.visitor_id,
+      sessionId: message.sessionId,
+      fingerprint: message.fingerprint,
+      timestamp: message.timestamp,
+      websiteInfo: this.websiteInfo,
+      userId: this.userId,
+      full_payload: message,  // Full payload for debugging
+    });
+
     try {
       this.socket.emit('message', message);
-      console.log('[Socket.IO] Message sent:', { text, conversation_id: this.conversationId });
+      console.log('[Socket.IO] Message sent successfully:', { 
+        text, 
+        conversation_id: this.conversationId,
+        tenantId: this.tenantId,
+      });
     } catch (error) {
       console.error('[Socket.IO] Error sending message:', error);
+      console.error('[Socket.IO] DEBUG - Failed message payload:', message);
       throw error;
     }
   }
