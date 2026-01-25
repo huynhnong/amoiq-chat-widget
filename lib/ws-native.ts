@@ -582,7 +582,6 @@ export class ChatWebSocketNative {
           room: data.room,
         });
         console.log('[Socket.IO] DEBUG - Room join confirmed. Socket is now listening for events in room:', data.room);
-        console.log('[Socket.IO] DEBUG - Socket rooms (if available):', this.socket?.rooms);
       });
 
       // Handle connection errors
