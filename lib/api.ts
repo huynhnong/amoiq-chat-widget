@@ -4,7 +4,7 @@
  * Production-ready with session management and user identification
  */
 
-import { getSessionInfo, refreshSession } from './session';
+import { getSessionInfo, refreshSession, getConversationId } from './session';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || process.env.NEXT_PUBLIC_API_URL || 'https://api-gateway-dfcflow.fly.dev';
 
@@ -232,6 +232,12 @@ export class ChatAPI {
         fingerprint: sessionInfo.fingerprint,
         ...this.websiteInfo, // Include domain, origin, url, referrer, siteId
       };
+
+      // Add conversation_id if available (to continue existing conversation)
+      const conversationId = getConversationId();
+      if (conversationId) {
+        payload.conversation_id = conversationId;
+      }
 
       // Only add tenantId if available - Gateway will resolve from domain if not provided
       if (this.tenantId) {

@@ -4,7 +4,7 @@
  */
 
 import { io, Socket } from 'socket.io-client';
-import { getSessionInfo, refreshSession } from './session';
+import { getSessionInfo, refreshSession, getConversationId, setConversationId, getVisitorId, isConversationExpired, clearConversation } from './session';
 
 export interface OnlineUser {
   userId: string;
@@ -69,6 +69,8 @@ export class ChatWebSocketNative {
   private wsToken?: string;
   private wsServerUrl?: string;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private tokenExpiresAt?: number; // Timestamp when token expires
+  private tokenRefreshTimer?: ReturnType<typeof setTimeout>; // Timer for proactive refresh
   private gatewayUrl: string;
 
   constructor(
@@ -153,6 +155,15 @@ export class ChatWebSocketNative {
     try {
       const sessionInfo = getSessionInfo();
       
+      // Check if conversation expired - if so, don't use stored visitorId
+      let storedVisitorId: string | undefined = undefined;
+      if (!isConversationExpired()) {
+        storedVisitorId = visitorId || getVisitorId() || undefined;
+      } else {
+        // Conversation expired, clear it
+        clearConversation();
+      }
+      
       const payload: any = {
         ...this.websiteInfo,
       };
@@ -162,8 +173,8 @@ export class ChatWebSocketNative {
         payload.tenantId = this.tenantId;
       }
 
-      if (visitorId) {
-        payload.visitorId = visitorId;
+      if (storedVisitorId) {
+        payload.visitorId = storedVisitorId;
       }
 
       if (this.userId) {
@@ -212,6 +223,16 @@ export class ChatWebSocketNative {
       this.visitorId = data.visitor_id;
       this.wsToken = data.ws_token;
       this.wsServerUrl = data.ws_server_url;
+      
+      // Store expiration timestamp (expires_in is in seconds)
+      const expiresInMs = (data.expires_in || 900) * 1000; // Default 15 minutes (900s) if not provided
+      this.tokenExpiresAt = Date.now() + expiresInMs;
+      
+      // Store conversation ID and visitor ID in localStorage with expiration timestamp
+      setConversationId(data.conversation_id, data.visitor_id);
+      
+      // Schedule proactive token refresh (refresh at 80% of expiration time)
+      this.scheduleTokenRefresh(expiresInMs * 0.8);
       // Extract additional fields from Gateway response
       if (data.integration_id) {
         this.integrationId = data.integration_id;
@@ -486,6 +507,23 @@ export class ChatWebSocketNative {
         this.handleMessage(data);
       });
 
+      // Handle meta_message_created events (from backend when messages are saved to DB)
+      // This is how admin/agent messages are delivered to frontend
+      this.socket.on('meta_message_created', (data: any) => {
+        console.log('[Socket.IO] Meta message created:', data);
+        // Extract message from data.message or use data directly
+        const message = data.message || data;
+        this.handleMessage(message);
+      });
+
+      // Handle AI event created events (optional, for AI responses)
+      this.socket.on('ai_event_created', (data: any) => {
+        console.log('[Socket.IO] AI event created:', data);
+        // Extract message from data.message or use data directly
+        const message = data.message || data;
+        this.handleMessage(message);
+      });
+
       // Handle presence events
       this.socket.on('user_online', (data: OnlineUser) => {
         console.log('[Socket.IO] User online:', data);
@@ -528,10 +566,21 @@ export class ChatWebSocketNative {
         });
         this.callbacks.onDisconnect?.();
 
+        // Check if token might be expired
+        const isTokenExpired = this.isTokenExpired();
+        const isAuthError = reason === 'io server disconnect' || 
+                           reason.includes('auth') || 
+                           reason.includes('token') ||
+                           reason.includes('unauthorized');
+
         // Attempt reconnection if needed (Socket.IO handles this automatically, but we can re-initialize if token expired)
-        if (this.shouldReconnect && reason === 'io server disconnect') {
-          // Server disconnected us, might need to re-authenticate
-          console.log('[Socket.IO] Server disconnected, re-initializing...');
+        if (this.shouldReconnect && (isAuthError || isTokenExpired)) {
+          // Server disconnected us or token expired, need to re-authenticate
+          console.log('[Socket.IO] Token expired or auth error, re-initializing...', {
+            reason,
+            isTokenExpired,
+            isAuthError,
+          });
           this.initialize(this.visitorId).then(() => {
             if (this.wsToken && this.wsServerUrl) {
               this.connect();
@@ -723,6 +772,58 @@ export class ChatWebSocketNative {
   }
 
   /**
+   * Schedule proactive token refresh before expiration
+   */
+  private scheduleTokenRefresh(refreshInMs: number): void {
+    // Clear existing timer
+    if (this.tokenRefreshTimer) {
+      clearTimeout(this.tokenRefreshTimer);
+    }
+
+    // Don't schedule if refresh time is too short (< 1 minute)
+    if (refreshInMs < 60000) {
+      console.warn('[Socket.IO] Token expires too soon, skipping proactive refresh');
+      return;
+    }
+
+    console.log(`[Socket.IO] Token refresh scheduled in ${Math.round(refreshInMs / 1000)}s`);
+
+    this.tokenRefreshTimer = setTimeout(async () => {
+      if (this.socket && this.socket.connected) {
+        console.log('[Socket.IO] Proactively refreshing token before expiration...');
+        try {
+          // Re-initialize to get new token
+          const result = await this.initialize(this.visitorId);
+          if (result && this.socket) {
+            // Disconnect old connection and reconnect with new token
+            const wasConnected = this.socket.connected;
+            this.socket.disconnect();
+            
+            if (wasConnected) {
+              // Reconnect with new token
+              this.connect();
+            }
+          }
+        } catch (error) {
+          console.error('[Socket.IO] Failed to refresh token:', error);
+          // Token refresh failed - let Socket.IO handle reconnection
+        }
+      }
+    }, refreshInMs);
+  }
+
+  /**
+   * Check if JWT token is expired or about to expire
+   */
+  isTokenExpired(): boolean {
+    if (!this.tokenExpiresAt) {
+      return true; // No token = expired
+    }
+    // Consider expired if less than 1 minute remaining
+    return Date.now() >= (this.tokenExpiresAt - 60000);
+  }
+
+  /**
    * Disconnect Socket.IO connection
    */
   disconnect(): void {
@@ -731,6 +832,12 @@ export class ChatWebSocketNative {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
+    }
+
+    // Clear token refresh timer
+    if (this.tokenRefreshTimer) {
+      clearTimeout(this.tokenRefreshTimer);
+      this.tokenRefreshTimer = undefined;
     }
 
     if (this.socket) {

@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { getTenantId } from '@/lib/tenant';
 import { ChatAPI, UserInfo } from '@/lib/api';
 import { ChatWebSocketNative } from '@/lib/ws-native';
-import { getSessionInfo, hasValidSession } from '@/lib/session';
+import { getSessionInfo, hasValidSession, getVisitorId, isConversationExpired, clearConversation } from '@/lib/session';
 import styles from './styles.module.css';
 
 // Force dynamic rendering - no caching
@@ -209,16 +209,37 @@ export default function EmbedPage() {
     const { userId, userInfo } = getUserInfo();
     const sessionInfo = getSessionInfo();
     
+    // Check if session or conversation expired
+    const sessionExpired = !hasValidSession();
+    const conversationExpired = isConversationExpired();
+    
+    if (sessionExpired || conversationExpired) {
+      console.log('[Widget] Session or conversation expired, clearing data');
+      // Clear conversation data
+      if (conversationExpired) {
+        clearConversation();
+      }
+      // Clear messages from UI (start fresh)
+      setMessages([]);
+    }
+    
     console.log('[Widget] Session info:', {
       sessionId: sessionInfo.sessionId,
       fingerprint: sessionInfo.fingerprint,
       hasValidSession: hasValidSession(),
       userId: userId || 'anonymous',
+      conversationExpired,
+      sessionExpired,
     });
     
     // Initialize API client with website info and user info
     // Pass tenantId (can be null) - Gateway will resolve from domain if not provided
     apiRef.current = new ChatAPI(tid, websiteInfo, userId, userInfo);
+    
+    // Only load history if session/conversation is still valid
+    if (!sessionExpired && !conversationExpired) {
+      loadConversationHistory();
+    }
     
     // Don't initialize WebSocket on mount - wait for user interaction
     // This prevents unnecessary API calls on every page refresh
@@ -311,8 +332,10 @@ export default function EmbedPage() {
       }, websiteInfo, false, userId, userInfo);
 
       // Step 1: Initialize conversation and get JWT token
-      console.log('[Widget] Initializing conversation...');
-      const initResult = await wsRef.current.initialize();
+      // Get stored visitorId to continue existing conversation (if not expired)
+      const storedVisitorId = getVisitorId();
+      console.log('[Widget] Initializing conversation...', storedVisitorId ? `(continuing with visitorId: ${storedVisitorId})` : '(new conversation)');
+      const initResult = await wsRef.current.initialize(storedVisitorId || undefined);
       
       if (!initResult) {
         throw new Error('Failed to initialize conversation');
@@ -340,7 +363,16 @@ export default function EmbedPage() {
       
       if (history.length > 0) {
         console.log(`[Widget] Loaded ${history.length} messages from history`);
-        setMessages(history);
+        // Merge with existing messages to avoid duplicates
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map(m => m.id));
+          const newMessages = history.filter(m => !existingIds.has(m.id));
+          // Sort by timestamp
+          const allMessages = [...prev, ...newMessages].sort(
+            (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          );
+          return allMessages;
+        });
       } else {
         console.log('[Widget] No conversation history found');
       }

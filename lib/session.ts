@@ -7,6 +7,9 @@
 const SESSION_ID_KEY = 'chat_session_id';
 const SESSION_CREATED_KEY = 'chat_session_created';
 const FINGERPRINT_KEY = 'chat_fingerprint';
+const CONVERSATION_ID_KEY = 'chat_conversation_id';
+const VISITOR_ID_KEY = 'chat_visitor_id';
+const CONVERSATION_CREATED_KEY = 'chat_conversation_created';
 
 export interface SessionInfo {
   sessionId: string;
@@ -169,6 +172,7 @@ export function clearSession(): void {
   try {
     localStorage.removeItem(SESSION_ID_KEY);
     localStorage.removeItem(SESSION_CREATED_KEY);
+    clearConversation(); // Also clear conversation when session is cleared
     // Keep fingerprint - it's device-specific, not session-specific
     console.log('[Session] Session cleared');
   } catch (error) {
@@ -217,6 +221,108 @@ export function refreshSession(): void {
     }
   } catch (error) {
     console.warn('[Session] Failed to refresh session:', error);
+  }
+}
+
+/**
+ * Get conversation ID (with expiration check - 24 hours)
+ */
+export function getConversationId(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const conversationId = localStorage.getItem(CONVERSATION_ID_KEY);
+    const createdAt = localStorage.getItem(CONVERSATION_CREATED_KEY);
+    
+    // Check if conversation is still valid (24 hours, same as session)
+    if (conversationId && createdAt) {
+      const age = Date.now() - parseInt(createdAt, 10);
+      const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+      
+      if (age < maxAge) {
+        return conversationId;
+      } else {
+        // Conversation expired - clear it
+        console.log('[Session] Conversation expired, clearing conversation data');
+        clearConversation();
+        return null;
+      }
+    }
+    
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Set conversation ID and visitor ID with expiration timestamp
+ */
+export function setConversationId(conversationId: string, visitorId?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const now = Date.now();
+    localStorage.setItem(CONVERSATION_ID_KEY, conversationId);
+    localStorage.setItem(CONVERSATION_CREATED_KEY, now.toString());
+    if (visitorId) {
+      localStorage.setItem(VISITOR_ID_KEY, visitorId);
+    }
+    console.log('[Session] Stored conversation ID:', conversationId);
+  } catch (error) {
+    console.warn('[Session] Failed to store conversation ID:', error);
+  }
+}
+
+/**
+ * Get visitor ID (only if conversation is still valid)
+ */
+export function getVisitorId(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    // Check if conversation is still valid before returning visitorId
+    const conversationId = getConversationId();
+    if (!conversationId) {
+      // Conversation expired, clear visitorId too
+      return null;
+    }
+    return localStorage.getItem(VISITOR_ID_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Clear conversation data (conversation_id, visitor_id, and timestamp)
+ */
+export function clearConversation(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(CONVERSATION_ID_KEY);
+    localStorage.removeItem(VISITOR_ID_KEY);
+    localStorage.removeItem(CONVERSATION_CREATED_KEY);
+    console.log('[Session] Conversation cleared');
+  } catch (error) {
+    console.warn('[Session] Failed to clear conversation:', error);
+  }
+}
+
+/**
+ * Check if conversation is expired (24 hours)
+ */
+export function isConversationExpired(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    const conversationId = localStorage.getItem(CONVERSATION_ID_KEY);
+    const createdAt = localStorage.getItem(CONVERSATION_CREATED_KEY);
+    
+    if (!conversationId || !createdAt) {
+      return true; // No conversation = expired
+    }
+    
+    const age = Date.now() - parseInt(createdAt, 10);
+    const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+    return age >= maxAge;
+  } catch {
+    return true;
   }
 }
 
