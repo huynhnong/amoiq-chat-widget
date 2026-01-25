@@ -459,11 +459,14 @@ export class ChatWebSocketNative {
         this.reconnectAttempts = 0;
         
         // Join conversation room
-        if (this.conversationId) {
+        if (this.conversationId && this.socket) {
           console.log('[Socket.IO] Joining conversation room:', this.conversationId);
           this.socket.emit('join:conversation', { conversationId: this.conversationId });
         } else {
-          console.warn('[Socket.IO] WARNING - Cannot join conversation room: conversation_id not available');
+          console.warn('[Socket.IO] WARNING - Cannot join conversation room:', {
+            has_conversation_id: !!this.conversationId,
+            has_socket: !!this.socket,
+          });
         }
         
         this.callbacks.onConnect?.();
