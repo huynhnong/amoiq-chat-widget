@@ -209,13 +209,16 @@ export class ChatWebSocketNative {
       this.wsToken = data.ws_token;
       this.wsServerUrl = data.ws_server_url;
       // Extract tenant_id from response (Gateway should return it)
-      this.tenantId = data.tenant_id || this.tenantId;
+      const receivedTenantId = data.tenant_id;
+      this.tenantId = receivedTenantId || this.tenantId;
 
-      // Debug logging
+      // Debug logging - show tenantId details
       console.log('[Socket.IO] Conversation initialized:', {
         conversation_id: this.conversationId,
         visitor_id: this.visitorId,
         tenant_id: this.tenantId,
+        tenant_id_type: typeof this.tenantId,
+        tenant_id_value: this.tenantId,
         ws_server_url: this.wsServerUrl,
         expires_in: data.expires_in,
       });
@@ -223,9 +226,12 @@ export class ChatWebSocketNative {
         conversation_id: data.conversation_id,
         visitor_id: data.visitor_id,
         tenant_id: data.tenant_id,
+        tenant_id_type: typeof data.tenant_id,
+        tenant_id_raw: data.tenant_id,
         has_ws_token: !!data.ws_token,
         has_ws_server_url: !!data.ws_server_url,
         expires_in: data.expires_in,
+        full_response: data,  // Full response for debugging
       });
       // Decode JWT token to see payload (without verification)
       let tokenPayload: any = null;
@@ -462,10 +468,12 @@ export class ChatWebSocketNative {
     }
 
     // Prepare message payload according to Gateway plan
+    // Server might expect tenant_id (snake_case) or tenantId (camelCase) - send both to be safe
     const message: any = {
       type: 'message',
       text,
-      tenantId: this.tenantId,  // REQUIRED by server
+      tenantId: this.tenantId,  // camelCase
+      tenant_id: this.tenantId,  // snake_case (server might expect this)
       conversation_id: this.conversationId,
       visitor_id: this.visitorId,
       timestamp: new Date().toISOString(),
@@ -481,11 +489,16 @@ export class ChatWebSocketNative {
       }
     }
 
-    // Debug logging - show full message payload
+    // Debug logging - show full message payload with tenantId details
     console.log('[Socket.IO] DEBUG - Sending message payload:', {
       type: message.type,
       text: message.text,
       tenantId: message.tenantId,
+      tenantId_type: typeof message.tenantId,
+      tenantId_value: message.tenantId,
+      tenant_id: message.tenant_id,
+      tenant_id_type: typeof message.tenant_id,
+      tenant_id_value: message.tenant_id,
       conversation_id: message.conversation_id,
       visitor_id: message.visitor_id,
       sessionId: message.sessionId,
@@ -494,6 +507,8 @@ export class ChatWebSocketNative {
       websiteInfo: this.websiteInfo,
       userId: this.userId,
       full_payload: message,  // Full payload for debugging
+      stored_tenantId: this.tenantId,
+      stored_tenantId_type: typeof this.tenantId,
     });
 
     try {
