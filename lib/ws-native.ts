@@ -1,9 +1,9 @@
 /**
- * Native WebSocket client for real-time chat
- * Implements Gateway plan: JWT token authentication, Redis pub/sub
- * Replaces Socket.io with native WebSocket
+ * Socket.IO client for real-time chat
+ * Connects directly to Socket.IO server using ws_server_url from /webchat/init response
  */
 
+import { io, Socket } from 'socket.io-client';
 import { getSessionInfo, refreshSession } from './session';
 
 export interface OnlineUser {
@@ -44,17 +44,17 @@ export interface ConversationInitResponse {
   conversation_id: string;
   visitor_id: string;
   ws_token: string;
+  ws_server_url: string;
   expires_in: number;
 }
 
 export class ChatWebSocketNative {
   private tenantId: string | null;
-  private ws: WebSocket | null = null;
+  private socket: Socket | null = null;
   private callbacks: WebSocketCallbacks;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private shouldReconnect = true;
-  private wsUrl: string;
   private websiteInfo: WebsiteInfo;
   private isAdmin: boolean;
   private userId?: string;
@@ -62,8 +62,8 @@ export class ChatWebSocketNative {
   private conversationId?: string;
   private visitorId?: string;
   private wsToken?: string;
+  private wsServerUrl?: string;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
-  private heartbeatInterval?: ReturnType<typeof setInterval>;
   private gatewayUrl: string;
 
   constructor(
@@ -95,7 +95,7 @@ export class ChatWebSocketNative {
           referrer: params?.get('referrer') || undefined,
           siteId: params?.get('siteId') || undefined,
         };
-        console.log('[WebSocket Native] Using website info from URL params:', this.websiteInfo);
+        console.log('[Socket.IO] Using website info from URL params:', this.websiteInfo);
       } else {
         // Last resort: use provided websiteInfo even if empty, or getWebsiteInfo() if not on webchat domain
         const fallback = this.getWebsiteInfo();
@@ -104,7 +104,7 @@ export class ChatWebSocketNative {
         } else {
           // On webchat domain without URL params - this shouldn't happen in production
           this.websiteInfo = websiteInfo || {};
-          console.warn('[WebSocket Native] ⚠️ No domain info available. Widget loader should pass domain via URL params.');
+          console.warn('[Socket.IO] ⚠️ No domain info available. Widget loader should pass domain via URL params.');
         }
       }
     }
@@ -113,11 +113,8 @@ export class ChatWebSocketNative {
     this.userId = userId;
     this.userInfo = userInfo;
     
-    // Get Gateway URL
+    // Get Gateway URL for /webchat/init endpoint
     this.gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL || process.env.NEXT_PUBLIC_API_URL || 'https://api-gateway-dfcflow.fly.dev';
-    
-    // Convert HTTP/HTTPS to WS/WSS
-    this.wsUrl = this.gatewayUrl.replace(/^https?:/, (match) => match === 'https:' ? 'wss:' : 'ws:');
   }
 
   /**
@@ -130,7 +127,7 @@ export class ChatWebSocketNative {
       const hostname = window.location.hostname;
       // Don't use webchat.amoiq.com as domain - this means we're in iframe without proper info
       if (hostname === 'webchat.amoiq.com' || hostname.includes('webchat')) {
-        console.warn('[WebSocket Native] ⚠️ Widget is on webchat domain but no websiteInfo provided. This should not happen in production.');
+        console.warn('[Socket.IO] ⚠️ Widget is on webchat domain but no websiteInfo provided. This should not happen in production.');
         return {};
       }
       return {
@@ -144,7 +141,7 @@ export class ChatWebSocketNative {
   }
 
   /**
-   * Initialize conversation and get JWT token
+   * Initialize conversation and get JWT token and Socket.IO server URL
    * Must be called before connect()
    */
   async initialize(visitorId?: string): Promise<ConversationInitResponse | null> {
@@ -209,116 +206,139 @@ export class ChatWebSocketNative {
       this.conversationId = data.conversation_id;
       this.visitorId = data.visitor_id;
       this.wsToken = data.ws_token;
+      this.wsServerUrl = data.ws_server_url;
 
-      console.log('[WebSocket Native] Conversation initialized:', {
+      console.log('[Socket.IO] Conversation initialized:', {
         conversation_id: this.conversationId,
         visitor_id: this.visitorId,
+        ws_server_url: this.wsServerUrl,
         expires_in: data.expires_in,
       });
 
       return data;
     } catch (error) {
-      console.error('[WebSocket Native] Error initializing conversation:', error);
+      console.error('[Socket.IO] Error initializing conversation:', error);
       this.callbacks.onError?.(error instanceof Error ? error : new Error('Failed to initialize conversation'));
       return null;
     }
   }
 
   /**
-   * Connect to WebSocket with JWT token
+   * Connect to Socket.IO server with JWT token
    * Must call initialize() first
    */
   connect(): void {
     // Ensure we're in the browser (not SSR)
     if (typeof window === 'undefined') {
-      console.warn('[WebSocket Native] Cannot connect: WebSocket is only available in the browser');
+      console.warn('[Socket.IO] Cannot connect: Socket.IO is only available in the browser');
       return;
     }
 
-    if (!this.wsToken) {
-      console.error('[WebSocket Native] Cannot connect: no JWT token. Call initialize() first.');
-      this.callbacks.onError?.(new Error('No JWT token. Call initialize() first.'));
+    if (!this.wsToken || !this.wsServerUrl) {
+      console.error('[Socket.IO] Cannot connect: no JWT token or server URL. Call initialize() first.');
+      this.callbacks.onError?.(new Error('No JWT token or server URL. Call initialize() first.'));
       return;
     }
 
-    if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
-      console.log('[WebSocket Native] Already connected or connecting');
+    if (this.socket && this.socket.connected) {
+      console.log('[Socket.IO] Already connected');
+      return;
+    }
+
+    if (this.socket && this.socket.connecting) {
+      console.log('[Socket.IO] Already connecting');
       return;
     }
 
     try {
-      // Connect with JWT token in query parameter
-      const wsUrlWithToken = `${this.wsUrl}/ws?token=${encodeURIComponent(this.wsToken)}`;
-      console.log('[WebSocket Native] Connecting to:', wsUrlWithToken.replace(this.wsToken, '***'));
+      // Connect to Socket.IO server using ws_server_url with token in auth object
+      console.log('[Socket.IO] Connecting to:', this.wsServerUrl.replace(/\/\/.*@/, '//***@')); // Hide credentials in log
+      
+      this.socket = io(this.wsServerUrl, {
+        auth: {
+          token: this.wsToken,
+        },
+        transports: ['websocket', 'polling'], // Allow fallback to polling if websocket fails
+        reconnection: true,
+        reconnectionAttempts: this.maxReconnectAttempts,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+      });
 
-      this.ws = new WebSocket(wsUrlWithToken);
-
-      this.ws.onopen = () => {
-        console.log('[WebSocket Native] ✅ Connected successfully');
+      // Connection established
+      this.socket.on('connect', () => {
+        console.log('[Socket.IO] ✅ Connected successfully');
         this.reconnectAttempts = 0;
-        this.startHeartbeat();
         this.callbacks.onConnect?.();
-      };
+      });
 
-      this.ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          this.handleMessage(data);
-        } catch (error) {
-          console.error('[WebSocket Native] Error parsing message:', error, event.data);
-        }
-      };
+      // Handle incoming messages
+      this.socket.on('message', (data: any) => {
+        console.log('[Socket.IO] Message received:', data);
+        this.handleMessage(data);
+      });
 
-      this.ws.onerror = (error) => {
-        console.error('[WebSocket Native] ❌ WebSocket error:', error);
-        this.callbacks.onError?.(new Error('WebSocket connection error'));
-      };
+      // Handle presence events
+      this.socket.on('user_online', (data: OnlineUser) => {
+        console.log('[Socket.IO] User online:', data);
+        this.callbacks.onUserOnline?.(data);
+      });
 
-      this.ws.onclose = (event) => {
-        console.log('[WebSocket Native] Disconnected:', event.code, event.reason);
-        this.stopHeartbeat();
+      this.socket.on('user_offline', (data: { userId: string } | string) => {
+        const userId = typeof data === 'string' ? data : data.userId;
+        console.log('[Socket.IO] User offline:', userId);
+        this.callbacks.onUserOffline?.(userId);
+      });
+
+      this.socket.on('online_users_list', (data: { users?: OnlineUser[] } | OnlineUser[]) => {
+        const users = Array.isArray(data) ? data : (data.users || []);
+        console.log('[Socket.IO] Online users list:', users);
+        this.callbacks.onOnlineUsersList?.(users);
+      });
+
+      // Handle connection errors
+      this.socket.on('connect_error', (error: Error) => {
+        console.error('[Socket.IO] ❌ Connection error:', error);
+        this.reconnectAttempts++;
+        this.callbacks.onError?.(error);
+      });
+
+      // Handle disconnection
+      this.socket.on('disconnect', (reason: string) => {
+        console.log('[Socket.IO] Disconnected:', reason);
         this.callbacks.onDisconnect?.();
 
-        // Attempt reconnection if needed
-        if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
-          this.reconnectAttempts++;
-          const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 10000);
-          console.log(`[WebSocket Native] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-          
-          this.reconnectTimer = setTimeout(() => {
-            // Re-initialize if token might be expired
-            if (this.reconnectAttempts > 2) {
-              this.initialize(this.visitorId).then(() => {
-                this.connect();
-              });
-            } else {
+        // Attempt reconnection if needed (Socket.IO handles this automatically, but we can re-initialize if token expired)
+        if (this.shouldReconnect && reason === 'io server disconnect') {
+          // Server disconnected us, might need to re-authenticate
+          console.log('[Socket.IO] Server disconnected, re-initializing...');
+          this.initialize(this.visitorId).then(() => {
+            if (this.wsToken && this.wsServerUrl) {
               this.connect();
             }
-          }, delay);
+          });
         }
-      };
+      });
+
+      // Handle general errors
+      this.socket.on('error', (error: Error) => {
+        console.error('[Socket.IO] ❌ Socket error:', error);
+        this.callbacks.onError?.(error);
+      });
     } catch (error) {
-      console.error('[WebSocket Native] Error creating connection:', error);
+      console.error('[Socket.IO] Error creating connection:', error);
       this.callbacks.onError?.(error as Error);
     }
   }
 
   /**
-   * Handle incoming messages from WebSocket
+   * Handle incoming messages from Socket.IO
    */
   private handleMessage(data: any): void {
-    console.log('[WebSocket Native] Message received:', data);
-
     // Handle different message types
     if (data.type === 'message' || data.message) {
       const message = data.message || data;
       this.callbacks.onMessage?.(message);
-    } else if (data.type === 'user_online') {
-      this.callbacks.onUserOnline?.(data);
-    } else if (data.type === 'user_offline') {
-      this.callbacks.onUserOffline?.(data.userId || data);
-    } else if (data.type === 'online_users_list') {
-      this.callbacks.onOnlineUsersList?.(data.users || data);
     } else {
       // Default: treat as message
       this.callbacks.onMessage?.(data);
@@ -326,16 +346,16 @@ export class ChatWebSocketNative {
   }
 
   /**
-   * Send a message through WebSocket
+   * Send a message through Socket.IO
    * Message is pushed to Redis stream chat_incoming
    */
   async sendMessage(text: string): Promise<void> {
     if (typeof window === 'undefined') {
-      throw new Error('WebSocket is only available in the browser');
+      throw new Error('Socket.IO is only available in the browser');
     }
 
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is not connected');
+    if (!this.socket || !this.socket.connected) {
+      throw new Error('Socket.IO is not connected');
     }
 
     const sessionInfo = getSessionInfo();
@@ -366,10 +386,10 @@ export class ChatWebSocketNative {
     }
 
     try {
-      this.ws.send(JSON.stringify(message));
-      console.log('[WebSocket Native] Message sent:', { text, conversation_id: this.conversationId });
+      this.socket.emit('message', message);
+      console.log('[Socket.IO] Message sent:', { text, conversation_id: this.conversationId });
     } catch (error) {
-      console.error('[WebSocket Native] Error sending message:', error);
+      console.error('[Socket.IO] Error sending message:', error);
       throw error;
     }
   }
@@ -379,17 +399,17 @@ export class ChatWebSocketNative {
    */
   requestOnlineUsers(): void {
     if (typeof window === 'undefined') {
-      console.warn('[WebSocket Native] Cannot request online users: WebSocket is only available in the browser');
+      console.warn('[Socket.IO] Cannot request online users: Socket.IO is only available in the browser');
       return;
     }
 
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn('[WebSocket Native] Cannot request online users: not connected');
+    if (!this.socket || !this.socket.connected) {
+      console.warn('[Socket.IO] Cannot request online users: not connected');
       return;
     }
 
     if (!this.isAdmin) {
-      console.warn('[WebSocket Native] Cannot request online users: not admin');
+      console.warn('[Socket.IO] Cannot request online users: not admin');
       return;
     }
 
@@ -400,61 +420,34 @@ export class ChatWebSocketNative {
     if (this.tenantId) {
       payload.tenantId = this.tenantId;
     }
-    this.ws.send(JSON.stringify(payload));
+    this.socket.emit('get_online_users', payload);
   }
 
   /**
-   * Start heartbeat to keep connection alive
-   */
-  private startHeartbeat(): void {
-    this.stopHeartbeat();
-    this.heartbeatInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        try {
-          this.ws.send(JSON.stringify({ type: 'ping' }));
-        } catch (error) {
-          console.error('[WebSocket Native] Heartbeat error:', error);
-        }
-      }
-    }, 30000); // Every 30 seconds
-  }
-
-  /**
-   * Stop heartbeat
-   */
-  private stopHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = undefined;
-    }
-  }
-
-  /**
-   * Disconnect WebSocket
+   * Disconnect Socket.IO connection
    */
   disconnect(): void {
     this.shouldReconnect = false;
-    this.stopHeartbeat();
     
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
 
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+    if (this.socket) {
+      this.socket.disconnect();
+      this.socket = null;
     }
   }
 
   /**
-   * Check if WebSocket is connected
+   * Check if Socket.IO is connected
    */
   isConnected(): boolean {
     if (typeof window === 'undefined') {
       return false;
     }
-    return this.ws?.readyState === WebSocket.OPEN;
+    return this.socket?.connected ?? false;
   }
 
   /**
@@ -473,4 +466,3 @@ export class ChatWebSocketNative {
     this.userInfo = undefined;
   }
 }
-

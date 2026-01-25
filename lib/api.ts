@@ -363,6 +363,7 @@ export class ChatAPI {
     conversation_id: string;
     visitor_id: string;
     ws_token: string;
+    ws_server_url: string;
     expires_in: number;
   } | null> {
     try {
