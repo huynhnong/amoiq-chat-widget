@@ -430,6 +430,8 @@ export class ChatWebSocketNative {
 
     // Disconnect existing socket if it exists but is not connected
     if (this.socket && !this.socket.connected) {
+      console.log('[Socket.IO] Disconnecting existing socket before reconnecting...');
+      this.socket.removeAllListeners(); // Remove all listeners to prevent duplicates
       this.socket.disconnect();
       this.socket = null;
     }
@@ -483,6 +485,60 @@ export class ChatWebSocketNative {
       });
       
       console.log('[Socket.IO] DEBUG - Socket.IO client created, waiting for connection...');
+      console.log('[Socket.IO] DEBUG - Setting up event listeners...');
+
+      // Set up event listeners BEFORE connection is established
+      // This ensures listeners are ready when connection happens
+      
+      // Handle incoming messages
+      this.socket.on('message', (data: any) => {
+        console.log('[Socket.IO] Message received:', data);
+        this.handleMessage(data);
+      });
+
+      // Handle meta_message_created events (from backend when messages are saved to DB)
+      // This is how admin/agent messages are delivered to frontend
+      this.socket.on('meta_message_created', (data: any) => {
+        console.log('[Socket.IO] ✅ meta_message_created event received:', data);
+        console.log('[Socket.IO] DEBUG - Event data structure:', {
+          has_message: !!data.message,
+          has_data: !!data,
+          data_keys: data ? Object.keys(data) : [],
+          data_type: typeof data,
+          is_array: Array.isArray(data),
+        });
+        // Extract message from data.message or use data directly
+        const message = data.message || data;
+        console.log('[Socket.IO] DEBUG - Extracted message:', message);
+        console.log('[Socket.IO] DEBUG - Calling handleMessage with:', message);
+        this.handleMessage(message);
+      });
+
+      // Handle AI event created events (optional, for AI responses)
+      this.socket.on('ai_event_created', (data: any) => {
+        console.log('[Socket.IO] AI event created:', data);
+        // Extract message from data.message or use data directly
+        const message = data.message || data;
+        this.handleMessage(message);
+      });
+
+      // Handle presence events
+      this.socket.on('user_online', (data: OnlineUser) => {
+        console.log('[Socket.IO] User online:', data);
+        this.callbacks.onUserOnline?.(data);
+      });
+
+      this.socket.on('user_offline', (data: { userId: string } | string) => {
+        const userId = typeof data === 'string' ? data : data.userId;
+        console.log('[Socket.IO] User offline:', userId);
+        this.callbacks.onUserOffline?.(userId);
+      });
+
+      this.socket.on('online_users_list', (data: { users?: OnlineUser[] } | OnlineUser[]) => {
+        const users = Array.isArray(data) ? data : (data.users || []);
+        console.log('[Socket.IO] Online users list:', users);
+        this.callbacks.onOnlineUsersList?.(users);
+      });
 
       // Connection established
       this.socket.on('connect', () => {
@@ -514,47 +570,6 @@ export class ChatWebSocketNative {
           conversation_id: data.conversation_id,
           room: data.room,
         });
-      });
-
-      // Handle incoming messages
-      this.socket.on('message', (data: any) => {
-        console.log('[Socket.IO] Message received:', data);
-        this.handleMessage(data);
-      });
-
-      // Handle meta_message_created events (from backend when messages are saved to DB)
-      // This is how admin/agent messages are delivered to frontend
-      this.socket.on('meta_message_created', (data: any) => {
-        console.log('[Socket.IO] Meta message created:', data);
-        // Extract message from data.message or use data directly
-        const message = data.message || data;
-        this.handleMessage(message);
-      });
-
-      // Handle AI event created events (optional, for AI responses)
-      this.socket.on('ai_event_created', (data: any) => {
-        console.log('[Socket.IO] AI event created:', data);
-        // Extract message from data.message or use data directly
-        const message = data.message || data;
-        this.handleMessage(message);
-      });
-
-      // Handle presence events
-      this.socket.on('user_online', (data: OnlineUser) => {
-        console.log('[Socket.IO] User online:', data);
-        this.callbacks.onUserOnline?.(data);
-      });
-
-      this.socket.on('user_offline', (data: { userId: string } | string) => {
-        const userId = typeof data === 'string' ? data : data.userId;
-        console.log('[Socket.IO] User offline:', userId);
-        this.callbacks.onUserOffline?.(userId);
-      });
-
-      this.socket.on('online_users_list', (data: { users?: OnlineUser[] } | OnlineUser[]) => {
-        const users = Array.isArray(data) ? data : (data.users || []);
-        console.log('[Socket.IO] Online users list:', users);
-        this.callbacks.onOnlineUsersList?.(users);
       });
 
       // Handle connection errors
@@ -619,14 +634,27 @@ export class ChatWebSocketNative {
    * Handle incoming messages from Socket.IO
    */
   private handleMessage(data: any): void {
+    console.log('[Socket.IO] handleMessage called with:', data);
+    console.log('[Socket.IO] DEBUG - Message structure:', {
+      has_type: !!data?.type,
+      type_value: data?.type,
+      has_message: !!data?.message,
+      has_callbacks: !!this.callbacks.onMessage,
+      data_keys: data ? Object.keys(data) : [],
+    });
+    
     // Handle different message types
     if (data.type === 'message' || data.message) {
       const message = data.message || data;
+      console.log('[Socket.IO] Calling onMessage callback with:', message);
       this.callbacks.onMessage?.(message);
     } else {
       // Default: treat as message
+      console.log('[Socket.IO] Calling onMessage callback with data directly:', data);
       this.callbacks.onMessage?.(data);
     }
+    
+    console.log('[Socket.IO] handleMessage completed');
   }
 
   /**
