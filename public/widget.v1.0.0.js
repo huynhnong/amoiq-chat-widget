@@ -137,6 +137,10 @@
         iframe.style.display = 'block';
         bubble.style.display = 'none';
         iframe.focus();
+        // Notify iframe that chat is now open (for WebSocket initialization)
+        if (iframe.contentWindow) {
+          iframe.contentWindow.postMessage({ type: 'amoiq-widget-open' }, '*');
+        }
       } else {
         iframe.style.display = 'none';
         bubble.style.display = 'flex';

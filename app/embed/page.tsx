@@ -18,6 +18,62 @@ interface Message {
   deliveryStatus?: 'pending' | 'delivered' | 'failed';
 }
 
+const MESSAGES_STORAGE_KEY = 'chat_messages';
+const MESSAGES_STORAGE_VERSION = '1';
+
+// Save messages to localStorage
+function saveMessagesToStorage(messages: Message[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const data = {
+      version: MESSAGES_STORAGE_VERSION,
+      messages,
+      savedAt: Date.now(),
+    };
+    localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(data));
+  } catch (error) {
+    console.warn('[Widget] Failed to save messages to localStorage:', error);
+  }
+}
+
+// Load messages from localStorage
+function loadMessagesFromStorage(): Message[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = localStorage.getItem(MESSAGES_STORAGE_KEY);
+    if (!stored) return [];
+    
+    const data = JSON.parse(stored);
+    // Check if data is valid and not too old (24 hours)
+    if (data && data.messages && Array.isArray(data.messages)) {
+      const age = Date.now() - (data.savedAt || 0);
+      const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+      
+      if (age < maxAge) {
+        return data.messages;
+      } else {
+        // Messages too old, clear them
+        localStorage.removeItem(MESSAGES_STORAGE_KEY);
+        return [];
+      }
+    }
+    return [];
+  } catch (error) {
+    console.warn('[Widget] Failed to load messages from localStorage:', error);
+    return [];
+  }
+}
+
+// Clear messages from localStorage
+function clearMessagesFromStorage(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(MESSAGES_STORAGE_KEY);
+  } catch (error) {
+    console.warn('[Widget] Failed to clear messages from localStorage:', error);
+  }
+}
+
 export default function EmbedPage() {
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -219,8 +275,16 @@ export default function EmbedPage() {
       if (conversationExpired) {
         clearConversation();
       }
-      // Clear messages from UI (start fresh)
+      // Clear messages from UI and storage (start fresh)
+      clearMessagesFromStorage();
       setMessages([]);
+    } else {
+      // Load messages from localStorage immediately (for instant display on refresh)
+      const cachedMessages = loadMessagesFromStorage();
+      if (cachedMessages.length > 0) {
+        console.log(`[Widget] Loaded ${cachedMessages.length} messages from cache`);
+        setMessages(cachedMessages);
+      }
     }
     
     console.log('[Widget] Session info:', {
@@ -241,14 +305,21 @@ export default function EmbedPage() {
       loadConversationHistory();
     }
     
-    // Don't initialize WebSocket on mount - wait for user interaction
-    // This prevents unnecessary API calls on every page refresh
-    // WebSocket will be initialized when user first interacts with the chat
+    // Listen for chat open message from parent (when user clicks chat bubble)
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'amoiq-widget-open' && !isInitialized && !wsRef.current) {
+        console.log('[Widget] Chat opened, initializing WebSocket...');
+        initializeWebSocket();
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
     
     return () => {
+      window.removeEventListener('message', handleMessage);
       wsRef.current?.disconnect();
     };
-  }, []);
+  }, [isInitialized]);
 
   // Initialize WebSocket only when needed (lazy initialization)
   const initializeWebSocket = async () => {
@@ -266,20 +337,37 @@ export default function EmbedPage() {
       const params = new URLSearchParams(window.location.search);
       const tid = params.get('tenantId') || params.get('tenant');
       
+      // Create a promise that resolves when WebSocket connects
+      let resolveConnect: (() => void) | null = null;
+      const connectPromise = new Promise<void>((resolve) => {
+        resolveConnect = resolve;
+      });
+      
       // Create WebSocket client
       // Pass tenantId (can be null) - Gateway will resolve from domain if not provided
       wsRef.current = new ChatWebSocketNative(tid, {
         onMessage: (message) => {
           setMessages((prev) => {
+            // Normalize message format - ensure sender type is consistent
+            // Handle different server formats (sender_type, sender, etc.)
+            let normalizedMessage = { ...message };
+            if (message.sender_type) {
+              normalizedMessage.sender = message.sender_type === 'user' ? 'user' : (message.sender_type === 'agent' ? 'agent' : 'bot');
+            }
+            // Ensure sender is one of the valid types
+            if (!normalizedMessage.sender || !['user', 'bot', 'agent', 'system'].includes(normalizedMessage.sender)) {
+              normalizedMessage.sender = 'bot'; // Default to bot if unknown
+            }
+            
             // If message has an ID, try to update existing message (for delivery status)
-            if (message.id) {
-              const existingIndex = prev.findIndex((m) => m.id === message.id);
+            if (normalizedMessage.id) {
+              const existingIndex = prev.findIndex((m) => m.id === normalizedMessage.id);
               if (existingIndex >= 0) {
                 // Update existing message (mark as delivered)
                 const updated = [...prev];
                 updated[existingIndex] = {
                   ...updated[existingIndex],
-                  ...message,
+                  ...normalizedMessage,
                   deliveryStatus: 'delivered' as const,
                 };
                 return updated;
@@ -287,28 +375,62 @@ export default function EmbedPage() {
             }
 
             // Try to match by text content and sender (for user messages that need status update)
-            if (message.sender === 'user' && message.text) {
+            // Check both 'user' sender and also match by text if it's a user message (regardless of sender type from server)
+            if (normalizedMessage.text) {
+              const messageTime = new Date(normalizedMessage.timestamp || Date.now()).getTime();
+              
+              // First, try to find a pending user message with matching text
               const pendingUserMessage = prev.find(
                 (m) => 
                   m.sender === 'user' && 
-                  m.text === message.text && 
+                  m.text === normalizedMessage.text && 
                   m.deliveryStatus === 'pending' &&
                   // Match messages within last 30 seconds
-                  Math.abs(new Date(m.timestamp).getTime() - new Date(message.timestamp || Date.now()).getTime()) < 30000
+                  Math.abs(new Date(m.timestamp).getTime() - messageTime) < 30000
               );
               
               if (pendingUserMessage) {
                 // Update the pending message with the real ID and mark as delivered
+                // Preserve the sender as 'user' (don't let server change it)
                 return prev.map((m) => 
                   m.id === pendingUserMessage.id
-                    ? { ...message, deliveryStatus: 'delivered' as const }
+                    ? { 
+                        ...normalizedMessage, 
+                        sender: 'user' as const, // Ensure it stays as user message
+                        deliveryStatus: 'delivered' as const 
+                      }
                     : m
                 );
+              }
+              
+              // Also check if this exact message already exists (prevent duplicates)
+              // Match by text and timestamp (within 5 seconds) - more lenient to catch duplicates
+              const duplicateMessage = prev.find(
+                (m) => 
+                  m.text === normalizedMessage.text &&
+                  // Check if same sender OR if one is user and the other might be from server
+                  (m.sender === normalizedMessage.sender || 
+                   (m.sender === 'user' && normalizedMessage.sender === 'user')) &&
+                  Math.abs(new Date(m.timestamp).getTime() - messageTime) < 5000
+              );
+              
+              if (duplicateMessage) {
+                // Message already exists, just update it if needed (maybe update ID if we have a real one)
+                console.log('[Widget] Duplicate message detected, skipping:', normalizedMessage.text);
+                // If we have a real ID and the duplicate has a temp ID, update it
+                if (normalizedMessage.id && normalizedMessage.id.startsWith('temp-') === false && duplicateMessage.id.startsWith('temp-')) {
+                  return prev.map((m) => 
+                    m.id === duplicateMessage.id
+                      ? { ...normalizedMessage, deliveryStatus: 'delivered' as const }
+                      : m
+                  );
+                }
+                return prev;
               }
             }
 
             // New message from server (agent/bot response or unmatched user message)
-            return [...prev, { ...message, deliveryStatus: 'delivered' as const }];
+            return [...prev, { ...normalizedMessage, deliveryStatus: 'delivered' as const }];
           });
         },
         onConnect: () => {
@@ -316,6 +438,11 @@ export default function EmbedPage() {
           setIsConnected(true);
           setIsLoading(false);
           setWsError(null);
+          
+          // Resolve the connection promise
+          if (resolveConnect) {
+            resolveConnect();
+          }
           
           // Load conversation history after connection
           loadConversationHistory();
@@ -350,6 +477,21 @@ export default function EmbedPage() {
       // Step 2: Connect WebSocket with JWT token
       console.log('[Widget] Connecting WebSocket...');
       wsRef.current.connect();
+      
+      // Wait for connection to be established (with timeout)
+      try {
+        await Promise.race([
+          connectPromise,
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('WebSocket connection timeout')), 10000)
+          )
+        ]);
+        console.log('[Widget] WebSocket connection established and ready');
+      } catch (error) {
+        console.warn('[Widget] WebSocket connection timeout or error:', error);
+        // Don't throw - allow fallback to HTTP API
+        // Connection might still succeed later, just not immediately
+      }
     } catch (error) {
       console.error('[Widget] Failed to initialize WebSocket:', error);
       setWsError(error instanceof Error ? error.message : 'WebSocket initialization failed');
@@ -375,12 +517,12 @@ export default function EmbedPage() {
     if (!apiRef.current) return;
     
     try {
-      console.log('[Widget] Loading conversation history...');
+      console.log('[Widget] Loading conversation history from API...');
       const history = await apiRef.current.getMessages();
       
       if (history.length > 0) {
-        console.log(`[Widget] Loaded ${history.length} messages from history`);
-        // Merge with existing messages to avoid duplicates
+        console.log(`[Widget] Loaded ${history.length} messages from API`);
+        // Merge with existing messages (from cache) to avoid duplicates
         setMessages((prev) => {
           const existingIds = new Set(prev.map(m => m.id));
           const newMessages = history.filter(m => !existingIds.has(m.id));
@@ -388,14 +530,18 @@ export default function EmbedPage() {
           const allMessages = [...prev, ...newMessages].sort(
             (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
           );
+          // Save merged messages to localStorage
+          saveMessagesToStorage(allMessages);
           return allMessages;
         });
       } else {
-        console.log('[Widget] No conversation history found');
+        console.log('[Widget] No conversation history found from API');
+        // If we have cached messages but API returns empty, keep cached messages
+        // (API might not have synced yet, or messages are still being processed)
       }
     } catch (error) {
       console.error('[Widget] Failed to load conversation history:', error);
-      // Don't block UI - continue even if history fails to load
+      // Don't block UI - continue with cached messages if available
     }
   };
 
@@ -404,14 +550,20 @@ export default function EmbedPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    if (messages.length > 0) {
+      saveMessagesToStorage(messages);
+    }
+  }, [messages]);
+
   const handleSend = async () => {
     if (!inputValue.trim()) return;
 
     // Initialize WebSocket if not already initialized (lazy initialization)
     if (!isInitialized && !wsRef.current) {
       await initializeWebSocket();
-      // Wait a bit for connection to establish
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // initializeWebSocket now waits for connection, so we don't need extra delay
     }
 
     const messageText = inputValue.trim();
@@ -432,14 +584,19 @@ export default function EmbedPage() {
 
     try {
       // Prefer WebSocket (pushes directly to Redis Stream)
-      if (wsRef.current && wsRef.current.isConnected()) {
+      // Check both the state and the method to be sure
+      if (wsRef.current && (isConnected || wsRef.current.isConnected())) {
         console.log('[Widget] Sending message via WebSocket');
         await wsRef.current.sendMessage(messageText);
         // Message will be updated when WebSocket receives meta_message_created event
       } else if (apiRef.current) {
         // Fallback to HTTP API if WebSocket is not connected
         console.warn('[Widget] WebSocket not connected, using HTTP API fallback');
-        console.log('[Widget] WebSocket status:', wsRef.current ? 'exists but not connected' : 'not initialized');
+        console.log('[Widget] WebSocket status:', {
+          exists: !!wsRef.current,
+          isConnectedState: isConnected,
+          isConnectedMethod: wsRef.current?.isConnected(),
+        });
         const response = await apiRef.current.sendMessage(messageText);
         
         // Check if conversation was closed and retried
