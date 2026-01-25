@@ -490,6 +490,17 @@ export class ChatWebSocketNative {
       // Set up event listeners BEFORE connection is established
       // This ensures listeners are ready when connection happens
       
+      // DEBUG: Listen to ALL events to see what's actually being received
+      this.socket.onAny((eventName: string, ...args: any[]) => {
+        console.log('[Socket.IO] 🔍 DEBUG - Received ANY event:', {
+          eventName,
+          argsCount: args.length,
+          firstArg: args[0],
+          firstArgType: typeof args[0],
+          firstArgKeys: args[0] && typeof args[0] === 'object' ? Object.keys(args[0]) : 'N/A',
+        });
+      });
+      
       // Handle incoming messages
       this.socket.on('message', (data: any) => {
         console.log('[Socket.IO] Message received:', data);
@@ -570,6 +581,8 @@ export class ChatWebSocketNative {
           conversation_id: data.conversation_id,
           room: data.room,
         });
+        console.log('[Socket.IO] DEBUG - Room join confirmed. Socket is now listening for events in room:', data.room);
+        console.log('[Socket.IO] DEBUG - Socket rooms (if available):', this.socket?.rooms);
       });
 
       // Handle connection errors
