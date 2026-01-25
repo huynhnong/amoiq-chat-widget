@@ -244,6 +244,8 @@ export class ChatWebSocketNative {
       
       // Priority: 1) Gateway response, 2) JWT token payload, 3) constructor value
       let finalTenantId: string | null = null;
+      let finalIntegrationId: string | null = null;
+      let finalSiteId: string | null = null;
       
       if (receivedTenantId && !placeholderValues.includes(String(receivedTenantId).toLowerCase())) {
         finalTenantId = receivedTenantId;
@@ -255,6 +257,22 @@ export class ChatWebSocketNative {
         console.log('[Socket.IO] Using tenant_id from constructor');
       }
       
+      // Extract integration_id: Gateway response > JWT token
+      if (data.integration_id && !placeholderValues.includes(String(data.integration_id).toLowerCase())) {
+        finalIntegrationId = data.integration_id;
+      } else if (tokenIntegrationId && !placeholderValues.includes(String(tokenIntegrationId).toLowerCase())) {
+        finalIntegrationId = tokenIntegrationId;
+        console.log('[Socket.IO] Using integration_id from JWT token payload');
+      }
+      
+      // Extract site_id: Gateway response > JWT token
+      if (data.site_id && !placeholderValues.includes(String(data.site_id).toLowerCase())) {
+        finalSiteId = data.site_id;
+      } else if (tokenSiteId && !placeholderValues.includes(String(tokenSiteId).toLowerCase())) {
+        finalSiteId = tokenSiteId;
+        console.log('[Socket.IO] Using site_id from JWT token payload');
+      }
+      
       if (receivedTenantId && placeholderValues.includes(String(receivedTenantId).toLowerCase())) {
         console.error('[Socket.IO] ERROR - Gateway returned placeholder tenant_id:', receivedTenantId);
         console.error('[Socket.IO] Gateway should return actual tenant_id, not a placeholder');
@@ -263,17 +281,27 @@ export class ChatWebSocketNative {
       }
       
       this.tenantId = finalTenantId;
+      this.integrationId = finalIntegrationId || this.integrationId;
+      this.siteId = finalSiteId || this.siteId;
       
       // Log where tenantId came from
-      console.log('[Socket.IO] DEBUG - tenantId source:', {
-        from_gateway_response: receivedTenantId,
-        from_gateway_type: typeof receivedTenantId,
-        from_jwt_token: tokenTenantId,
-        from_jwt_token_type: typeof tokenTenantId,
-        from_constructor: this.tenantId !== finalTenantId ? this.tenantId : null,
-        is_placeholder: finalTenantId && placeholderValues.includes(String(finalTenantId).toLowerCase()),
-        final_tenantId: this.tenantId,
-        final_tenantId_type: typeof this.tenantId,
+      console.log('[Socket.IO] DEBUG - Field extraction summary:', {
+        tenantId: {
+          from_gateway_response: receivedTenantId,
+          from_jwt_token: tokenTenantId,
+          from_constructor: this.tenantId !== finalTenantId ? this.tenantId : null,
+          final: this.tenantId,
+        },
+        integrationId: {
+          from_gateway_response: data.integration_id,
+          from_jwt_token: tokenIntegrationId,
+          final: this.integrationId,
+        },
+        siteId: {
+          from_gateway_response: data.site_id,
+          from_jwt_token: tokenSiteId,
+          final: this.siteId,
+        },
         full_response: data,  // Show full Gateway response
       });
 
@@ -295,10 +323,14 @@ export class ChatWebSocketNative {
         tenant_id: data.tenant_id,
         tenant_id_type: typeof data.tenant_id,
         tenant_id_raw: data.tenant_id,
+        integration_id: data.integration_id,
+        integration_id_type: typeof data.integration_id,
+        site_id: data.site_id,
+        site_id_type: typeof data.site_id,
         has_ws_token: !!data.ws_token,
         has_ws_server_url: !!data.ws_server_url,
         expires_in: data.expires_in,
-        full_response: data,  // Full response for debugging - check if tenant_id is here
+        full_response: data,  // Full response for debugging - check if tenant_id, integration_id, site_id are here
         response_keys: Object.keys(data),  // Show all keys in response
       });
       // Decode JWT token to see payload (without verification)
