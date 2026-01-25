@@ -52,14 +52,14 @@ export interface OnlineUser {
 }
 
 export class ChatAPI {
-  private tenantId: string;
+  private tenantId: string | null;
   private baseUrl: string;
   private websiteInfo: WebsiteInfo;
   private userId?: string; // For logged-in users
   private userInfo?: UserInfo; // User information
 
-  constructor(tenantId: string, websiteInfo?: WebsiteInfo, userId?: string, userInfo?: UserInfo) {
-    this.tenantId = tenantId;
+  constructor(tenantId: string | null, websiteInfo?: WebsiteInfo, userId?: string, userInfo?: UserInfo) {
+    this.tenantId = tenantId || null;
     this.baseUrl = API_BASE_URL;
     // Use provided websiteInfo if it has domain/origin, otherwise try to get from URL params
     // Don't use fallback getWebsiteInfo() if we're on webchat domain (would return wrong domain)
@@ -180,16 +180,22 @@ export class ChatAPI {
       
       // Build query params with session info
       const params = new URLSearchParams({
-        tenantId: this.tenantId,
         sessionId: sessionInfo.sessionId,
       });
+
+      // Only add tenantId if available - Gateway will resolve from domain if not provided
+      if (this.tenantId) {
+        params.append('tenantId', this.tenantId);
+      }
 
       // Add userId if logged in
       if (this.userId) {
         params.append('userId', this.userId);
       }
 
-      const response = await fetch(`${this.baseUrl}/api/chat/messages?${params.toString()}`, {
+      // Use /webchat/messages endpoint (consistent with /webchat/message and /webchat/init)
+      // Keep domain info in headers (X-Website-Origin/X-Website-Domain) - Gateway handlers read from headers
+      const response = await fetch(`${this.baseUrl}/webchat/messages?${params.toString()}`, {
         method: 'GET',
         headers: this.getHeaders(),
       });
@@ -222,11 +228,15 @@ export class ChatAPI {
       // Prepare message payload
       const payload: any = {
         text,
-        tenantId: this.tenantId,
         sessionId: sessionInfo.sessionId,
         fingerprint: sessionInfo.fingerprint,
         ...this.websiteInfo, // Include domain, origin, url, referrer, siteId
       };
+
+      // Only add tenantId if available - Gateway will resolve from domain if not provided
+      if (this.tenantId) {
+        payload.tenantId = this.tenantId;
+      }
 
       // Add user identification if logged in
       const userId = options?.userId || this.userId;
@@ -321,12 +331,16 @@ export class ChatAPI {
    */
   async initializeSession(): Promise<{ sessionId: string } | null> {
     try {
+      const payload: any = {};
+      // Only add tenantId if available
+      if (this.tenantId) {
+        payload.tenantId = this.tenantId;
+      }
+
       const response = await fetch(`${this.baseUrl}/api/chat/session`, {
         method: 'POST',
         headers: this.getHeaders(),
-        body: JSON.stringify({
-          tenantId: this.tenantId,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -356,9 +370,13 @@ export class ChatAPI {
       
       // Prepare payload according to Gateway plan
       const payload: any = {
-        tenantId: this.tenantId,
         ...this.websiteInfo, // domain, origin, url, siteId
       };
+
+      // Only add tenantId if available - Gateway will resolve from domain if not provided
+      if (this.tenantId) {
+        payload.tenantId = this.tenantId;
+      }
 
       // Add visitorId if provided (for returning users)
       if (visitorId) {
@@ -399,7 +417,13 @@ export class ChatAPI {
    */
   async getOnlineUsers(): Promise<OnlineUser[]> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/webchat/online-users?tenantId=${this.tenantId}`, {
+      const params = new URLSearchParams();
+      // Only add tenantId if available
+      if (this.tenantId) {
+        params.append('tenantId', this.tenantId);
+      }
+
+      const response = await fetch(`${this.baseUrl}/api/webchat/online-users?${params.toString()}`, {
         method: 'GET',
         headers: this.getHeaders(),
       });

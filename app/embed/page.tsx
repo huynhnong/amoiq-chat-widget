@@ -171,15 +171,10 @@ export default function EmbedPage() {
 
   useEffect(() => {
     // Get tenant ID from URL params (support both 'tenantId' and 'tenant')
+    // tenantId is optional - Gateway will resolve it from domain if not provided
     const params = new URLSearchParams(window.location.search);
     const tid = params.get('tenantId') || params.get('tenant');
     
-    if (!tid) {
-      console.error('Missing tenantId or tenant parameter');
-      setIsLoading(false);
-      return;
-    }
-
     setTenantId(tid);
     
     // Get website info
@@ -221,12 +216,14 @@ export default function EmbedPage() {
     });
     
     // Initialize API client with website info and user info
+    // Pass tenantId (can be null) - Gateway will resolve from domain if not provided
     apiRef.current = new ChatAPI(tid, websiteInfo, userId, userInfo);
     
     // Initialize WebSocket with new native WebSocket client (Gateway plan)
     const initializeWebSocket = async () => {
       try {
         // Create WebSocket client
+        // Pass tenantId (can be null) - Gateway will resolve from domain if not provided
         wsRef.current = new ChatWebSocketNative(tid, {
           onMessage: (message) => {
             setMessages((prev) => {
@@ -419,13 +416,8 @@ export default function EmbedPage() {
     );
   }
 
-  if (!tenantId) {
-    return (
-      <div className={styles.container}>
-        <div className={styles.error}>Invalid configuration</div>
-      </div>
-    );
-  }
+  // tenantId is optional - Gateway will resolve from domain
+  // No need to block rendering if tenantId is missing - Gateway will handle it
 
   return (
     <div className={styles.container}>

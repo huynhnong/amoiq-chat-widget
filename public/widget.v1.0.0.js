@@ -15,10 +15,7 @@
     const tenantId = config.tenantId;
     const position = config.position || 'bottom-right';
     
-    if (!tenantId) {
-      console.warn('Amoiq Chat Widget: tenantId is required in ChatWidgetConfig');
-      return;
-    }
+    // tenantId is optional - Gateway will resolve it from domain if not provided
 
     // Prevent multiple initializations
     if (document.getElementById('amoiq-widget-container')) {
@@ -97,9 +94,12 @@
     iframe.id = 'amoiq-widget-iframe';
     const baseUrl = config.baseUrl || getBaseUrl();
     
-    // Build URL with tenantId and website info
+    // Build URL with tenantId (if provided) and website info
     const urlParams = new URLSearchParams();
-    urlParams.set('tenantId', tenantId);
+    // Only add tenantId if provided - Gateway will resolve from domain if not provided
+    if (tenantId) {
+      urlParams.set('tenantId', tenantId);
+    }
     
     // Add website info from current page
     if (typeof window !== 'undefined') {

@@ -48,7 +48,7 @@ export interface ConversationInitResponse {
 }
 
 export class ChatWebSocketNative {
-  private tenantId: string;
+  private tenantId: string | null;
   private ws: WebSocket | null = null;
   private callbacks: WebSocketCallbacks;
   private reconnectAttempts = 0;
@@ -67,14 +67,14 @@ export class ChatWebSocketNative {
   private gatewayUrl: string;
 
   constructor(
-    tenantId: string,
+    tenantId: string | null,
     callbacks: WebSocketCallbacks = {},
     websiteInfo?: WebsiteInfo,
     isAdmin: boolean = false,
     userId?: string,
     userInfo?: UserInfo
   ) {
-    this.tenantId = tenantId;
+    this.tenantId = tenantId || null;
     this.callbacks = callbacks;
     
     // Use provided websiteInfo if it has domain/origin, otherwise try to get from URL params
@@ -152,9 +152,13 @@ export class ChatWebSocketNative {
       const sessionInfo = getSessionInfo();
       
       const payload: any = {
-        tenantId: this.tenantId,
         ...this.websiteInfo,
       };
+
+      // Only add tenantId if available - Gateway will resolve from domain if not provided
+      if (this.tenantId) {
+        payload.tenantId = this.tenantId;
+      }
 
       if (visitorId) {
         payload.visitorId = visitorId;
@@ -342,13 +346,17 @@ export class ChatWebSocketNative {
       type: 'message',
       text,
       conversation_id: this.conversationId,
-      tenant_id: this.tenantId,
       visitor_id: this.visitorId,
       timestamp: new Date().toISOString(),
       sessionId: sessionInfo.sessionId,
       fingerprint: sessionInfo.fingerprint,
       ...this.websiteInfo,
     };
+
+    // Only add tenant_id if available
+    if (this.tenantId) {
+      message.tenant_id = this.tenantId;
+    }
 
     if (this.userId) {
       message.userId = this.userId;
@@ -385,10 +393,14 @@ export class ChatWebSocketNative {
       return;
     }
 
-    this.ws.send(JSON.stringify({
+    const payload: any = {
       type: 'get_online_users',
-      tenantId: this.tenantId,
-    }));
+    };
+    // Only add tenantId if available
+    if (this.tenantId) {
+      payload.tenantId = this.tenantId;
+    }
+    this.ws.send(JSON.stringify(payload));
   }
 
   /**
