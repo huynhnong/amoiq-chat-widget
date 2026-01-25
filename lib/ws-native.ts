@@ -457,7 +457,24 @@ export class ChatWebSocketNative {
           transport: this.socket?.io?.engine?.transport?.name,
         });
         this.reconnectAttempts = 0;
+        
+        // Join conversation room
+        if (this.conversationId) {
+          console.log('[Socket.IO] Joining conversation room:', this.conversationId);
+          this.socket.emit('join:conversation', { conversationId: this.conversationId });
+        } else {
+          console.warn('[Socket.IO] WARNING - Cannot join conversation room: conversation_id not available');
+        }
+        
         this.callbacks.onConnect?.();
+      });
+
+      // Listen for joined event from server (confirmation of room join)
+      this.socket.on('joined', (data: { conversation_id: string; room: string }) => {
+        console.log('[Socket.IO] ✅ Joined conversation room:', {
+          conversation_id: data.conversation_id,
+          room: data.room,
+        });
       });
 
       // Handle incoming messages
