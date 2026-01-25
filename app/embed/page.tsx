@@ -375,43 +375,77 @@ export default function EmbedPage() {
             }
 
             // Try to match by text content and sender (for user messages that need status update)
-            // Check both 'user' sender and also match by text if it's a user message (regardless of sender type from server)
+            // Priority: 1) Pending messages (optimistic updates), 2) Any existing user message, 3) General duplicates
             if (normalizedMessage.text) {
               const messageTime = new Date(normalizedMessage.timestamp || Date.now()).getTime();
               
-              // First, try to find a pending user message with matching text
+              // FIRST: Check for pending user message with matching text (most likely match)
+              // This catches the optimistic message we just added
               const pendingUserMessage = prev.find(
                 (m) => 
                   m.sender === 'user' && 
                   m.text === normalizedMessage.text && 
                   m.deliveryStatus === 'pending' &&
-                  // Match messages within last 30 seconds
-                  Math.abs(new Date(m.timestamp).getTime() - messageTime) < 30000
+                  // Match messages within last 60 seconds (very lenient for pending messages)
+                  Math.abs(new Date(m.timestamp).getTime() - messageTime) < 60000
               );
               
               if (pendingUserMessage) {
                 // Update the pending message with the real ID and mark as delivered
-                // Preserve the sender as 'user' (don't let server change it)
+                console.log('[Widget] Updating pending user message:', normalizedMessage.text, 'with ID:', normalizedMessage.id);
                 return prev.map((m) => 
                   m.id === pendingUserMessage.id
                     ? { 
                         ...normalizedMessage, 
                         sender: 'user' as const, // Ensure it stays as user message
-                        deliveryStatus: 'delivered' as const 
+                        deliveryStatus: 'delivered' as const,
+                        // Keep original timestamp (from when user sent it)
+                        timestamp: m.timestamp
                       }
                     : m
                 );
               }
               
-              // Also check if this exact message already exists (prevent duplicates)
-              // Match by text and timestamp (within 5 seconds) - more lenient to catch duplicates
+              // SECOND: For user messages, check for ANY existing user message with same text
+              // This prevents duplicates when server echoes back user messages
+              // Check if this is a user message (from server response)
+              const isUserMessage = normalizedMessage.sender === 'user' || 
+                                   normalizedMessage.sender_type === 'user' ||
+                                   (normalizedMessage as any).sender_type === 'user';
+              
+              if (isUserMessage) {
+                const existingUserMessage = prev.find(
+                  (m) => 
+                    m.sender === 'user' && 
+                    m.text === normalizedMessage.text && 
+                    // Match messages within last 60 seconds (lenient for server echoes)
+                    Math.abs(new Date(m.timestamp).getTime() - messageTime) < 60000
+                );
+                
+                if (existingUserMessage) {
+                  // Update the existing message with the real ID and mark as delivered
+                  console.log('[Widget] Updating existing user message:', normalizedMessage.text);
+                  return prev.map((m) => 
+                    m.id === existingUserMessage.id
+                      ? { 
+                          ...normalizedMessage, 
+                          sender: 'user' as const, // Ensure it stays as user message
+                          deliveryStatus: 'delivered' as const,
+                          // Keep original timestamp
+                          timestamp: m.timestamp
+                        }
+                      : m
+                  );
+                }
+              }
+              
+              // THIRD: General duplicate check for any message type (within 10 seconds)
+              // This catches any other duplicates that might have slipped through
               const duplicateMessage = prev.find(
                 (m) => 
                   m.text === normalizedMessage.text &&
-                  // Check if same sender OR if one is user and the other might be from server
-                  (m.sender === normalizedMessage.sender || 
-                   (m.sender === 'user' && normalizedMessage.sender === 'user')) &&
-                  Math.abs(new Date(m.timestamp).getTime() - messageTime) < 5000
+                  m.sender === normalizedMessage.sender &&
+                  Math.abs(new Date(m.timestamp).getTime() - messageTime) < 10000
               );
               
               if (duplicateMessage) {
@@ -428,6 +462,7 @@ export default function EmbedPage() {
                       : m
                   );
                 }
+                // Otherwise, just skip adding the duplicate
                 return prev;
               }
             }
