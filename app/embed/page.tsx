@@ -817,20 +817,9 @@ export default function EmbedPage() {
     setMessages((prev) => [...prev, userMessage]);
 
     try {
-      // Prefer WebSocket (pushes directly to Redis Stream)
-      // Check both the state and the method to be sure
-      if (wsRef.current && (isConnected || wsRef.current.isConnected())) {
-        console.log('[Widget] Sending message via WebSocket');
-        await wsRef.current.sendMessage(messageText);
-        // Message will be updated when WebSocket receives meta_message_created event
-      } else if (apiRef.current) {
-        // Fallback to HTTP API if WebSocket is not connected
-        console.warn('[Widget] WebSocket not connected, using HTTP API fallback');
-        console.log('[Widget] WebSocket status:', {
-          exists: !!wsRef.current,
-          isConnectedState: isConnected,
-          isConnectedMethod: wsRef.current?.isConnected(),
-        });
+      // Prefer HTTP API for consistency and reliability
+      if (apiRef.current) {
+        console.log('[Widget] Sending message via HTTP API');
         const response = await apiRef.current.sendMessage(messageText);
         
         // Check if conversation was closed and retried
@@ -849,6 +838,7 @@ export default function EmbedPage() {
         }
 
         // If API returns a message with ID, update the temp message
+        // Keep as 'pending' - will be marked 'delivered' when WebSocket receives meta_message_created event
         if (response.message && response.message.id) {
           setMessages((prev) => {
             const filtered = prev.filter((m) => m.id !== tempId);
@@ -858,6 +848,12 @@ export default function EmbedPage() {
             }];
           });
         }
+        // Message remains as 'pending' - WebSocket will update to 'delivered' when meta_message_created is received
+      } else if (wsRef.current && (isConnected || wsRef.current.isConnected())) {
+        // Fallback to WebSocket if HTTP API is not available
+        console.warn('[Widget] HTTP API not available, using WebSocket fallback');
+        await wsRef.current.sendMessage(messageText);
+        // Message will be updated when WebSocket receives meta_message_created event
       } else {
         throw new Error('No connection available. Please try again.');
       }
