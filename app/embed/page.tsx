@@ -352,18 +352,40 @@ export default function EmbedPage() {
             // Handle different server formats (sender_type, sender, etc.)
             let normalizedMessage = { ...message };
             
+            // Map messageId/message_id to id if present (server sends messageId or message_id, we expect id)
+            // Priority: message_id (from message:new) > messageId (from meta_message_created) > id
+            if (message.message_id && !normalizedMessage.id) {
+              normalizedMessage.id = message.message_id;
+            } else if (message.messageId && !normalizedMessage.id) {
+              normalizedMessage.id = message.messageId;
+            }
+            
             // Priority: sender_type > sender > default
             if (message.sender_type) {
               normalizedMessage.sender = message.sender_type === 'user' ? 'user' : (message.sender_type === 'agent' ? 'agent' : 'bot');
             } else if (message.sender) {
-              normalizedMessage.sender = message.sender;
+              // If sender is a UUID (user ID), infer it's a user message
+              const senderStr = String(message.sender);
+              if (senderStr.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+                normalizedMessage.sender = 'user';
+              } else if (['user', 'bot', 'agent', 'system'].includes(senderStr)) {
+                normalizedMessage.sender = senderStr as 'user' | 'bot' | 'agent' | 'system';
+              } else {
+                normalizedMessage.sender = message.sender;
+              }
             }
             
             // Ensure sender is one of the valid types
             if (!normalizedMessage.sender || !['user', 'bot', 'agent', 'system'].includes(normalizedMessage.sender)) {
               // Try to infer from other fields
-              if ((message as any).userId || (message as any).user_id || (message as any).visitor_id) {
-                normalizedMessage.sender = 'user'; // Likely a user message if it has userId
+              if ((message as any).userId || (message as any).user_id || (message as any).visitor_id || (message as any).sender) {
+                // If sender is a UUID or we have user identifiers, it's a user message
+                const senderStr = String((message as any).sender || '');
+                if (senderStr.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+                  normalizedMessage.sender = 'user';
+                } else {
+                  normalizedMessage.sender = 'user'; // Likely a user message if it has userId
+                }
               } else {
                 normalizedMessage.sender = 'bot'; // Default to bot if unknown
               }
@@ -375,23 +397,24 @@ export default function EmbedPage() {
             }
             
             // STEP 1: Check if message with same ID already exists (simple deduplication by ID)
-            if (normalizedMessage.id) {
-              const existingById = prev.find((m) => m.id === normalizedMessage.id);
+            // Also check message_id field (message:new events use message_id as the actual message ID)
+            // message:new events have: id (event ID), message_id (actual message ID)
+            // meta_message_created events have: messageId (actual message ID)
+            const messageId = normalizedMessage.id || (message as any).messageId || (message as any).message_id;
+            if (messageId) {
+              const existingById = prev.find((m) => {
+                // Check if any existing message has the same ID
+                if (m.id === messageId) return true;
+                // Check if existing message has message_id that matches
+                if ((m as any).message_id === messageId) return true;
+                // Check if new message has message_id that matches existing message id
+                if ((message as any).message_id && m.id === (message as any).message_id) return true;
+                return false;
+              });
               if (existingById) {
-                // Message with this ID already exists - just update it
-                console.log('[Widget] Message with ID already exists, updating:', normalizedMessage.id);
-                return prev.map((m) => 
-                  m.id === normalizedMessage.id
-                    ? { 
-                        ...m, // Keep existing properties
-                        ...normalizedMessage, // Update with new data
-                        deliveryStatus: 'delivered' as const,
-                        // Preserve original sender and timestamp if they're better
-                        sender: m.sender || normalizedMessage.sender,
-                        timestamp: m.timestamp || normalizedMessage.timestamp
-                      }
-                    : m
-                );
+                // Message with this ID already exists - just update it (don't add duplicate)
+                console.log('[Widget] Message with ID already exists, skipping duplicate:', messageId);
+                return prev; // Don't add duplicate, just return existing messages
               }
             }
 
@@ -403,10 +426,12 @@ export default function EmbedPage() {
               const messageTime = new Date(normalizedMessage.timestamp || Date.now()).getTime();
               
               // Find pending message with same text (the optimistic one we added)
+              // Also match by sender to ensure we're replacing the right message
               const pendingMessage = prev.find(
                 (m) => 
                   m.text === normalizedMessage.text && 
                   m.deliveryStatus === 'pending' &&
+                  m.sender === normalizedMessage.sender &&
                   // Match within last 60 seconds
                   Math.abs(new Date(m.timestamp).getTime() - messageTime) < 60000
               );
@@ -428,13 +453,17 @@ export default function EmbedPage() {
             }
 
             // STEP 3: Check for duplicates by text and sender (within 10 seconds)
-            // This catches any other duplicates
-            if (normalizedMessage.text) {
+            // BUT: Skip this check if message has a real ID (not temp) - it should replace pending or be new
+            // This catches duplicates that don't have IDs or are from other sources
+            if (normalizedMessage.text && 
+                (!normalizedMessage.id || normalizedMessage.id.startsWith('temp-'))) {
               const messageTime = new Date(normalizedMessage.timestamp || Date.now()).getTime();
               const duplicate = prev.find(
                 (m) => 
                   m.text === normalizedMessage.text &&
                   m.sender === normalizedMessage.sender &&
+                  // Don't match pending messages - those should be replaced by STEP 2
+                  m.deliveryStatus !== 'pending' &&
                   Math.abs(new Date(m.timestamp).getTime() - messageTime) < 10000
               );
               

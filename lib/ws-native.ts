@@ -535,8 +535,10 @@ export class ChatWebSocketNative {
           data_type: typeof data,
           is_array: Array.isArray(data),
         });
+        // Extract message from data.message or use data directly (same as meta_message_created)
+        const rawMessage = data.message || data;
         // Transform message:new format to expected message format
-        const message = this.transformMessageNewToMessage(data);
+        const message = this.transformMessageNewToMessage(rawMessage);
         console.log('[Socket.IO] DEBUG - Transformed message:', message);
         console.log('[Socket.IO] DEBUG - Calling handleMessage with:', message);
         this.handleMessage(message);
@@ -664,22 +666,32 @@ export class ChatWebSocketNative {
    */
   private transformMessageNewToMessage(data: any): any {
     // message:new event has fields like: id, message_text, sender_type, sender_id, etc.
-    // Transform to expected message format
-    return {
-      id: data.id,
+    // IMPORTANT: message:new events have message_id (actual message ID) and id (event ID)
+    // We should use message_id as the primary ID for deduplication
+    // Preserve all original fields first
+    const transformed = {
+      ...data,
+      // Override with normalized fields (these take precedence)
+      id: data.message_id || data.messageId || data.id,  // Use message_id first (actual message ID), then messageId, then id
       text: data.message_text || data.text,
-      sender: data.sender_type === 'user' ? 'user' : 'agent',
-      senderId: data.sender_id,
+      sender: data.sender_type === 'user' ? 'user' : (data.sender_type === 'agent' ? 'agent' : (data.sender_type === 'human' ? 'agent' : 'bot')),
+      senderId: data.sender_id || data.sender,  // Handle sender being a UUID
       senderName: data.sender_name,
       timestamp: data.created_at || data.inserted_at || data.timestamp || new Date().toISOString(),
       conversation_id: data.conversation_id,
-      tenant_id: data.tenant_id,
+      tenant_id: data.tenant_id || data.tenantId,
       status: data.status,
       attachments: data.attachments,
       metadata: data.metadata,
-      // Preserve all original fields
-      ...data,
     };
+    
+    // If sender is a UUID (user ID), we'll let the normalization in embed/page.tsx handle it
+    // But ensure we have the original sender field preserved
+    if (data.sender && !transformed.senderId) {
+      transformed.senderId = data.sender;
+    }
+    
+    return transformed;
   }
 
   /**
