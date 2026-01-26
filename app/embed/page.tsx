@@ -22,13 +22,24 @@ const MESSAGES_STORAGE_KEY = 'chat_messages';
 const MESSAGES_STORAGE_VERSION = '1';
 
 // Save messages to localStorage
-function saveMessagesToStorage(messages: Message[]): void {
+function saveMessagesToStorage(messages: Message[], lastUserMessageAt?: number): void {
   if (typeof window === 'undefined') return;
   try {
+    // Find the last user message timestamp if not provided
+    let lastUserMsgTime = lastUserMessageAt;
+    if (lastUserMsgTime === undefined) {
+      const userMessages = messages.filter(m => m.sender === 'user');
+      if (userMessages.length > 0) {
+        const lastUserMsg = userMessages[userMessages.length - 1];
+        lastUserMsgTime = lastUserMsg.timestamp ? new Date(lastUserMsg.timestamp).getTime() : Date.now();
+      }
+    }
+    
     const data = {
       version: MESSAGES_STORAGE_VERSION,
       messages,
       savedAt: Date.now(),
+      lastUserMessageAt: lastUserMsgTime || null,
     };
     localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(data));
   } catch (error) {
@@ -44,18 +55,31 @@ function loadMessagesFromStorage(): Message[] {
     if (!stored) return [];
     
     const data = JSON.parse(stored);
-    // Check if data is valid and not too old (24 hours)
+    // Check if data is valid and not too old (1 hour)
     if (data && data.messages && Array.isArray(data.messages)) {
       const age = Date.now() - (data.savedAt || 0);
-      const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+      const maxAge = 60 * 60 * 1000; // 1 hour
       
-      if (age < maxAge) {
-        return data.messages;
-      } else {
+      if (age >= maxAge) {
         // Messages too old, clear them
         localStorage.removeItem(MESSAGES_STORAGE_KEY);
         return [];
       }
+      
+      // Check if 5 minutes have passed since last user message
+      if (data.lastUserMessageAt) {
+        const timeSinceLastUserMessage = Date.now() - data.lastUserMessageAt;
+        const fiveMinutes = 5 * 60 * 1000; // 5 minutes
+        
+        if (timeSinceLastUserMessage >= fiveMinutes) {
+          // 5 minutes passed since last user message, clear messages
+          console.log('[Widget] 5 minutes passed since last user message, clearing chat history');
+          localStorage.removeItem(MESSAGES_STORAGE_KEY);
+          return [];
+        }
+      }
+      
+      return data.messages;
     }
     return [];
   } catch (error) {
@@ -750,8 +774,14 @@ export default function EmbedPage() {
           const allMessages = [...prev, ...newMessages].sort(
             (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
           );
-          // Save merged messages to localStorage
-          saveMessagesToStorage(allMessages);
+          // Save merged messages to localStorage (preserve lastUserMessageAt if exists)
+          const userMessages = allMessages.filter(m => m.sender === 'user');
+          let lastUserMessageAt: number | undefined;
+          if (userMessages.length > 0) {
+            const lastUserMsg = userMessages[userMessages.length - 1];
+            lastUserMessageAt = lastUserMsg.timestamp ? new Date(lastUserMsg.timestamp).getTime() : undefined;
+          }
+          saveMessagesToStorage(allMessages, lastUserMessageAt);
           return allMessages;
         });
       } else {
@@ -773,9 +803,51 @@ export default function EmbedPage() {
   // Save messages to localStorage whenever they change
   useEffect(() => {
     if (messages.length > 0) {
-      saveMessagesToStorage(messages);
+      // Find the last user message timestamp
+      const userMessages = messages.filter(m => m.sender === 'user');
+      let lastUserMessageAt: number | undefined;
+      if (userMessages.length > 0) {
+        const lastUserMsg = userMessages[userMessages.length - 1];
+        lastUserMessageAt = lastUserMsg.timestamp ? new Date(lastUserMsg.timestamp).getTime() : undefined;
+      }
+      saveMessagesToStorage(messages, lastUserMessageAt);
     }
   }, [messages]);
+
+  // Periodic check to clear messages after 5 minutes of inactivity
+  useEffect(() => {
+    const checkAndClearMessages = () => {
+      if (typeof window === 'undefined') return;
+      
+      try {
+        const stored = localStorage.getItem(MESSAGES_STORAGE_KEY);
+        if (!stored) return;
+        
+        const data = JSON.parse(stored);
+        if (data && data.lastUserMessageAt) {
+          const timeSinceLastUserMessage = Date.now() - data.lastUserMessageAt;
+          const fiveMinutes = 5 * 60 * 1000; // 5 minutes
+          
+          if (timeSinceLastUserMessage >= fiveMinutes) {
+            // 5 minutes passed since last user message, clear messages
+            console.log('[Widget] 5 minutes passed since last user message, clearing chat history');
+            localStorage.removeItem(MESSAGES_STORAGE_KEY);
+            setMessages([]);
+          }
+        }
+      } catch (error) {
+        console.warn('[Widget] Failed to check message timeout:', error);
+      }
+    };
+
+    // Check immediately
+    checkAndClearMessages();
+    
+    // Then check every minute
+    const interval = setInterval(checkAndClearMessages, 60 * 1000);
+    
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSend = async () => {
     if (!inputValue.trim()) return;
@@ -814,7 +886,12 @@ export default function EmbedPage() {
       timestamp: now,
       deliveryStatus: 'pending',
     };
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages((prev) => {
+      const updated = [...prev, userMessage];
+      // Save immediately with the new last user message timestamp
+      saveMessagesToStorage(updated, Date.now());
+      return updated;
+    });
 
     try {
       // Prefer HTTP API for consistency and reliability
