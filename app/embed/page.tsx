@@ -641,6 +641,20 @@ export default function EmbedPage() {
                 normalizedMessage.text) {
               const messageTime = new Date(normalizedMessage.timestamp || Date.now()).getTime();
               
+              // Debug: Log what we're looking for
+              console.log('[Widget] Looking for pending message to replace:', {
+                text: normalizedMessage.text,
+                sender: normalizedMessage.sender,
+                id: normalizedMessage.id,
+                timestamp: normalizedMessage.timestamp,
+                pendingMessages: prev.filter(m => m.deliveryStatus === 'pending').map(m => ({
+                  text: m.text,
+                  sender: m.sender,
+                  id: m.id,
+                  timestamp: m.timestamp
+                }))
+              });
+              
               // Find pending message with same text (the optimistic one we added)
               // Also match by sender to ensure we're replacing the right message
               const pendingMessage = prev.find(
@@ -654,7 +668,7 @@ export default function EmbedPage() {
               
               if (pendingMessage) {
                 // Replace the pending message with the real one from server
-                console.log('[Widget] Replacing pending message with server message:', normalizedMessage.text, 'ID:', normalizedMessage.id);
+                console.log('[Widget] ✅ Replacing pending message with server message:', normalizedMessage.text, 'ID:', normalizedMessage.id);
                 return prev.map((m) => 
                   m.id === pendingMessage.id
                     ? { 
@@ -665,7 +679,24 @@ export default function EmbedPage() {
                       }
                     : m
                 );
+              } else {
+                console.log('[Widget] ❌ No pending message found to replace. Check:', {
+                  hasText: !!normalizedMessage.text,
+                  textValue: normalizedMessage.text,
+                  hasId: !!normalizedMessage.id,
+                  idValue: normalizedMessage.id,
+                  isTemp: normalizedMessage.id?.startsWith('temp-'),
+                  pendingCount: prev.filter(m => m.deliveryStatus === 'pending').length
+                });
               }
+            } else {
+              console.log('[Widget] ⚠️ Cannot match pending message - missing requirements:', {
+                hasId: !!normalizedMessage.id,
+                id: normalizedMessage.id,
+                isTemp: normalizedMessage.id?.startsWith('temp-'),
+                hasText: !!normalizedMessage.text,
+                text: normalizedMessage.text
+              });
             }
 
             // STEP 3: Check for duplicates by text and sender (within 10 seconds)
