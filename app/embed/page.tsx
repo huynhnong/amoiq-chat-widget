@@ -312,8 +312,14 @@ export default function EmbedPage() {
         });
         
         // Priority: sender_type > sender > default
+        // Backend uses: "user" (customer/widget), "human" (admin/agent), "ai" (bot)
+        // Normalize to: "user", "agent", "bot"
         if (message.sender_type) {
-          normalizedMessage.sender = message.sender_type === 'user' ? 'user' : (message.sender_type === 'agent' ? 'agent' : 'bot');
+          normalizedMessage.sender = message.sender_type === 'user' 
+            ? 'user' 
+            : (message.sender_type === 'human' || message.sender_type === 'agent' 
+              ? 'agent' 
+              : (message.sender_type === 'ai' ? 'bot' : 'bot'));
         } else if (message.sender) {
           // If sender is a UUID (user ID), infer it's a user message
           const senderStr = String(message.sender);
@@ -375,10 +381,44 @@ export default function EmbedPage() {
             console.log('[Widget] STEP 1 - Message with ID already exists, skipping duplicate:', messageId);
             return prev; // Don't add duplicate, just return existing messages
           } else {
-            console.log('[Widget] STEP 1 - No duplicate found by ID, proceeding to STEP 2');
+            console.log('[Widget] STEP 1 - No duplicate found by ID, proceeding to STEP 1.5');
           }
         } else {
-          console.log('[Widget] STEP 1 - No message ID found, proceeding to STEP 2');
+          console.log('[Widget] STEP 1 - No message ID found, proceeding to STEP 1.5');
+        }
+
+        // STEP 1.5: Deduplicate admin/bot messages that arrive twice (message:new fast, then meta_message_created slow)
+        // Both admin ('human'→'agent') and bot ('ai'→'bot') messages come from outside the widget
+        // They both arrive via: 1) message:new (fast WebSocket), 2) meta_message_created (slow, after DB write)
+        // This ONLY runs for non-user messages to avoid interfering with user pending message flow
+        // User messages go through STEP 2 (pending message replacement) instead
+        // Backend sender types: "user" (customer/widget), "human" (admin/agent), "ai" (bot)
+        // After normalization: "user" stays "user", "human" becomes "agent", "ai" becomes "bot"
+        if (normalizedMessage.text && 
+            normalizedMessage.sender && 
+            normalizedMessage.sender !== 'user' &&  // Catches both 'agent' (admin) and 'bot' (AI) messages
+            normalizedMessage.timestamp) {
+          const messageTime = new Date(normalizedMessage.timestamp).getTime();
+          const duplicateByContent = prev.find((m) => {
+            // Match by text and sender (must be same sender type: both 'agent' or both 'bot')
+            if (m.text !== normalizedMessage.text || m.sender !== normalizedMessage.sender) {
+              return false;
+            }
+            // Match within last 10 seconds (messages arrive quickly via message:new, then worker processes and sends meta_message_created)
+            const timeDiff = Math.abs(new Date(m.timestamp).getTime() - messageTime);
+            return timeDiff < 10000;
+          });
+          
+          if (duplicateByContent) {
+            console.log('[Widget] STEP 1.5 - Admin/bot message duplicate found by text+sender+time, skipping:', {
+              text: normalizedMessage.text,
+              sender: normalizedMessage.sender,
+              sender_type: (normalizedMessage as any).sender_type,
+              existingId: duplicateByContent.id,
+              newId: messageId
+            });
+            return prev; // Skip duplicate
+          }
         }
 
         // STEP 2: If message has a real ID (not temp) and we have a pending message with same text
