@@ -631,10 +631,31 @@ export default function EmbedPage() {
             console.error('[Widget] Presence WebSocket error:', error);
             setWsError(error.message || 'WebSocket connection failed');
           },
-          onConversationCreated: (conversationId) => {
+          onConversationCreated: async (conversationId) => {
             console.log('[Widget] Conversation created via WebSocket:', conversationId);
             // Conversation was created by backend, update state
             setChatState('active');
+            
+            // Load message history after conversation is created
+            if (apiRef.current) {
+              try {
+                console.log('[Widget] Loading message history for conversation:', conversationId);
+                const history = await apiRef.current.getConversationMessages(conversationId);
+                if (history && history.length > 0) {
+                  console.log('[Widget] Loaded', history.length, 'messages from history');
+                  const historyMessages: Message[] = history.map((msg: any) => ({
+                    id: msg.id,
+                    text: msg.message_text || msg.text,
+                    sender: (msg.sender_type === 'user' ? 'user' : (msg.sender_type === 'agent' ? 'agent' : 'bot')) as 'user' | 'bot' | 'agent' | 'system',
+                    timestamp: msg.created_at || msg.timestamp,
+                    deliveryStatus: 'delivered' as const
+                  }));
+                  setMessages(historyMessages);
+                }
+              } catch (error) {
+                console.warn('[Widget] Failed to load message history:', error);
+              }
+            }
           },
           onConversationClosed: () => {
             console.log('[Widget] Conversation closed due to inactivity');

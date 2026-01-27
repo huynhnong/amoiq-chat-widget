@@ -271,7 +271,7 @@ export class ChatWebSocketNative {
       console.log('[Socket.IO] Conversation created event received:', data);
       if (data.conversation_id) {
         this.conversationId = data.conversation_id;
-        this.callbacks.onConversationCreated?.(data.conversation_id);
+        // Don't call onConversationCreated here - it will be called after joining the room
         this.switchToConversationRoom(data.conversation_id);
       }
     });
@@ -284,7 +284,7 @@ export class ChatWebSocketNative {
       if (conversationId) {
         console.log('[Widget] New conversation created, switching to conversation room:', conversationId);
         this.conversationId = conversationId;
-        this.callbacks.onConversationCreated?.(conversationId);
+        // Don't call onConversationCreated here - it will be called after joining the room
         // Automatically switch from session room to conversation room
         this.switchToConversationRoom(conversationId);
       }
@@ -298,7 +298,7 @@ export class ChatWebSocketNative {
       if (conversationId && !this.conversationId) {
         console.log('[Widget] Conversation update received, switching to conversation room:', conversationId);
         this.conversationId = conversationId;
-        this.callbacks.onConversationCreated?.(conversationId);
+        // Don't call onConversationCreated here - it will be called after joining the room
         // Automatically switch from session room to conversation room
         this.switchToConversationRoom(conversationId);
       } else if (conversationId && this.conversationId !== conversationId) {
@@ -340,7 +340,7 @@ export class ChatWebSocketNative {
         if (!this.conversationId) {
           console.log('[Widget] Conversation ID found in message, switching to conversation room:', messageConversationId);
           this.conversationId = messageConversationId;
-          this.callbacks.onConversationCreated?.(messageConversationId);
+          // Don't call onConversationCreated here - it will be called after joining the room
           this.switchToConversationRoom(messageConversationId);
           // Process the message after switching
           this.handleMessage(message);
@@ -376,7 +376,7 @@ export class ChatWebSocketNative {
         if (!this.conversationId) {
           console.log('[Widget] Conversation ID found in message:new, switching to conversation room:', messageConversationId);
           this.conversationId = messageConversationId;
-          this.callbacks.onConversationCreated?.(messageConversationId);
+          // Don't call onConversationCreated here - it will be called after joining the room
           this.switchToConversationRoom(messageConversationId);
           // Process the message after switching
           this.handleMessage(message);
@@ -426,6 +426,11 @@ export class ChatWebSocketNative {
         console.log('[Socket.IO] Now leaving session room:', sessionRoom);
         this.socket?.emit('leave:session', { sessionId: this.presenceSessionId });
       }
+      
+      // Trigger callback to load message history
+      // This ensures history is loaded AFTER we're fully in the conversation room
+      console.log('[Socket.IO] Calling onConversationCreated after joined confirmation');
+      this.callbacks.onConversationCreated?.(conversationId);
     });
   }
 
