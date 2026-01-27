@@ -1067,16 +1067,24 @@ export class ChatWebSocketNative {
       data_keys: data ? Object.keys(data) : [],
     });
     
-    // Handle different message types
-    if (data.type === 'message' || data.message) {
-      const message = data.message || data;
-      console.log('[Socket.IO] Calling onMessage callback with:', message);
-      this.callbacks.onMessage?.(message);
-    } else {
-      // Default: treat as message
-      console.log('[Socket.IO] Calling onMessage callback with data directly:', data);
-      this.callbacks.onMessage?.(data);
-    }
+    // CRITICAL: Always transform the message to ensure consistent format
+    // This ensures message_text -> text conversion happens regardless of which listener received it
+    const transformedMessage = this.transformMessageNewToMessage(data);
+    
+    console.log('[Socket.IO] Transformed message before callback:', {
+      originalHasText: !!data.text,
+      originalHasMessageText: !!data.message_text,
+      originalText: data.text,
+      originalMessageText: data.message_text,
+      transformedHasText: !!transformedMessage.text,
+      transformedText: transformedMessage.text,
+      transformedId: transformedMessage.id,
+      transformedSender: transformedMessage.sender
+    });
+    
+    // Pass the transformed message to the callback
+    console.log('[Socket.IO] Calling onMessage callback with transformed message');
+    this.callbacks.onMessage?.(transformedMessage);
     
     console.log('[Socket.IO] handleMessage completed');
   }
