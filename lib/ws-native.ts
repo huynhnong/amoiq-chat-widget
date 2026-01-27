@@ -273,6 +273,25 @@ export class ChatWebSocketNative {
       }
     });
 
+    // Listen for conversation:update events (broadcasted to session room when conversation is updated)
+    this.socket.on('conversation:update', (data: { id?: string; conversation_id?: string; conversationId?: string }) => {
+      console.log('[Socket.IO] Conversation:update event received:', data);
+      // Handle multiple possible field names for conversation ID
+      const conversationId = data.id || data.conversation_id || data.conversationId;
+      if (conversationId && !this.conversationId) {
+        console.log('[Widget] Conversation update received, switching to conversation room:', conversationId);
+        this.conversationId = conversationId;
+        this.callbacks.onConversationCreated?.(conversationId);
+        // Automatically switch from session room to conversation room
+        this.switchToConversationRoom(conversationId);
+      } else if (conversationId && this.conversationId !== conversationId) {
+        // Conversation ID changed, switch to new conversation room
+        console.log('[Widget] Conversation ID changed, switching to new conversation room:', conversationId);
+        this.conversationId = conversationId;
+        this.switchToConversationRoom(conversationId);
+      }
+    });
+
     // Listen for conversation closed events
     this.socket.on('conversation:closed', (data: { conversation_id: string }) => {
       console.log('[Socket.IO] Conversation closed event received:', data);
