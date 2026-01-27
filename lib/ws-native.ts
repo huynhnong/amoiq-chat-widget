@@ -322,12 +322,48 @@ export class ChatWebSocketNative {
     this.socket.emit('join:conversation', { conversationId });
     this.currentRoom = roomName;
 
+    // Set up message event listeners when joining conversation room
+    this.setupMessageEventListeners();
+
     // Listen for joined confirmation
     this.socket.once('joined', (data: { conversation_id: string; room: string }) => {
       console.log('[Socket.IO] ✅ Joined conversation room:', {
         conversation_id: data.conversation_id,
         room: data.room,
       });
+    });
+  }
+
+  /**
+   * Set up message event listeners for conversation room
+   */
+  private setupMessageEventListeners(): void {
+    if (!this.socket) return;
+
+    // Remove existing listeners to avoid duplicates
+    this.socket.off('meta_message_created');
+    this.socket.off('message:new');
+    this.socket.off('message');
+
+    // Handle meta_message_created events (from backend when messages are saved to DB)
+    this.socket.on('meta_message_created', (data: any) => {
+      console.log('[Socket.IO] ✅ meta_message_created event received:', data);
+      const message = data.message || data;
+      this.handleMessage(message);
+    });
+
+    // Handle message:new events (alternative event name used by server)
+    this.socket.on('message:new', (data: any) => {
+      console.log('[Socket.IO] ✅ message:new event received:', data);
+      const rawMessage = data.message || data;
+      const message = this.transformMessageNewToMessage(rawMessage);
+      this.handleMessage(message);
+    });
+
+    // Handle generic message events
+    this.socket.on('message', (data: any) => {
+      console.log('[Socket.IO] Message received:', data);
+      this.handleMessage(data);
     });
   }
 
