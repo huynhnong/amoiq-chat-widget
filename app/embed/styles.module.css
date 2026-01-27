@@ -43,6 +43,30 @@
   color: #111827;
 }
 
+.clearButton {
+  position: absolute;
+  right: 140px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 6px 12px;
+  line-height: 1;
+  transition: all 0.2s;
+  font-weight: 500;
+  z-index: 1;
+}
+
+.clearButton:hover {
+  background: #e5e7eb;
+  color: #111827;
+  border-color: #9ca3af;
+}
+
 .status {
   position: absolute;
   right: 48px;

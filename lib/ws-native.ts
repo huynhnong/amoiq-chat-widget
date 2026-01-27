@@ -89,6 +89,19 @@ export class ChatWebSocketNative {
   ) {
     this.tenantId = tenantId || null;
     this.callbacks = callbacks;
+  }
+
+  /**
+   * Update callbacks after construction
+   * Useful when WebSocket is created in presence mode and later needs message callbacks
+   */
+  updateCallbacks(newCallbacks: WebSocketCallbacks): void {
+    this.callbacks = { ...this.callbacks, ...newCallbacks };
+    console.log('[Socket.IO] Callbacks updated:', {
+      hasOnMessage: !!this.callbacks.onMessage,
+      hasOnConnect: !!this.callbacks.onConnect,
+      hasOnDisconnect: !!this.callbacks.onDisconnect
+    });
     
     // Use provided websiteInfo if it has domain/origin, otherwise try to get from URL params
     // Don't use fallback getWebsiteInfo() if we're on webchat domain (would return wrong domain)
@@ -389,24 +402,26 @@ export class ChatWebSocketNative {
     // This ensures we catch messages immediately when we join
     this.setupMessageEventListeners();
 
-    // Leave session room if we're in it
-    if (this.currentRoom && this.currentRoom.startsWith('session:')) {
-      console.log('[Socket.IO] Leaving session room:', this.currentRoom);
-      this.socket.emit('leave:session', { sessionId: this.presenceSessionId });
-    }
-
-    // Join conversation room
+    // Join conversation room FIRST (before leaving session room)
+    // This ensures we're in the room when messages are broadcast
     const roomName = `conversation:${conversationId}`;
     console.log('[Socket.IO] Joining conversation room:', roomName);
     this.socket.emit('join:conversation', { conversationId });
     this.currentRoom = roomName;
 
-    // Listen for joined confirmation
+    // Listen for joined confirmation, THEN leave session room
     this.socket.once('joined', (data: { conversation_id: string; room: string }) => {
       console.log('[Socket.IO] ✅ Joined conversation room:', {
         conversation_id: data.conversation_id,
         room: data.room,
       });
+      
+      // NOW it's safe to leave session room - we're confirmed in conversation room
+      if (this.presenceSessionId) {
+        const sessionRoom = `session:${this.presenceSessionId}`;
+        console.log('[Socket.IO] Now leaving session room:', sessionRoom);
+        this.socket?.emit('leave:session', { sessionId: this.presenceSessionId });
+      }
     });
   }
 

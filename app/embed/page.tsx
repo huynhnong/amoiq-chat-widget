@@ -532,7 +532,7 @@ export default function EmbedPage() {
 
   // Initialize WebSocket only when needed (lazy initialization)
   const initializeWebSocket = async () => {
-    if (isInitialized || wsRef.current) {
+    if (isInitialized) {
       return; // Already initialized
     }
     
@@ -552,9 +552,9 @@ export default function EmbedPage() {
         resolveConnect = resolve;
       });
       
-      // Create WebSocket client
-      // Pass tenantId (can be null) - Gateway will resolve from domain if not provided
-      wsRef.current = new ChatWebSocketNative(tid, {
+      // Check if WebSocket already exists (from presence initialization)
+      // If so, just update callbacks instead of creating a new instance
+      const messageCallbacks = {
         onMessage: (message) => {
           setMessages((prev) => {
             // Debug: Log raw message received
@@ -782,7 +782,17 @@ export default function EmbedPage() {
           setIsLoading(false);
           setIsConnected(false);
         },
-      }, websiteInfo, false, userId, userInfo);
+      };
+      
+      // Check if WebSocket already exists from presence initialization
+      if (wsRef.current) {
+        console.log('[Widget] WebSocket exists, updating callbacks');
+        wsRef.current.updateCallbacks(messageCallbacks);
+      } else {
+        // Create new WebSocket client
+        console.log('[Widget] Creating new WebSocket client');
+        wsRef.current = new ChatWebSocketNative(tid, messageCallbacks, websiteInfo, false, userId, userInfo);
+      }
 
       // Step 1: Initialize conversation and get JWT token
       // Get stored visitorId to continue existing conversation (if not expired)
