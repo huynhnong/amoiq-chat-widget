@@ -293,21 +293,29 @@ export class ChatWebSocketNative {
     });
 
     // Listen for conversation:update events (broadcasted to session room when conversation is updated)
+    // According to backend docs: conversation:update uses 'id' field (REQUIRED) and is broadcast to session:{sessionId} room
     this.socket.on('conversation:update', (data: { id?: string; conversation_id?: string; conversationId?: string }) => {
       console.log('[Socket.IO] Conversation:update event received:', data);
       // Handle multiple possible field names for conversation ID
+      // Backend uses 'id' field per WEBSOCKET_PAYLOADS.md, but we support all variants for compatibility
       const conversationId = data.id || data.conversation_id || data.conversationId;
-      if (conversationId && !this.conversationId) {
-        console.log('[Widget] Conversation update received, switching to conversation room:', conversationId);
-        this.conversationId = conversationId;
-        // Don't call onConversationCreated here - it will be called after joining the room
-        // Automatically switch from session room to conversation room
-        this.switchToConversationRoom(conversationId);
-      } else if (conversationId && this.conversationId !== conversationId) {
-        // Conversation ID changed, switch to new conversation room
-        console.log('[Widget] Conversation ID changed, switching to new conversation room:', conversationId);
-        this.conversationId = conversationId;
-        this.switchToConversationRoom(conversationId);
+      
+      if (conversationId) {
+        // If we don't have conversationId yet, or we're not in conversation room yet, switch
+        const shouldSwitch = !this.conversationId || !this.currentRoom?.startsWith('conversation:');
+        
+        if (shouldSwitch) {
+          console.log('[Widget] Conversation update received, switching to conversation room:', conversationId);
+          this.conversationId = conversationId;
+          // Don't call onConversationCreated here - it will be called after joining the room
+          // Automatically switch from session room to conversation room
+          this.switchToConversationRoom(conversationId);
+        } else if (this.conversationId !== conversationId) {
+          // Conversation ID changed, switch to new conversation room
+          console.log('[Widget] Conversation ID changed, switching to new conversation room:', conversationId);
+          this.conversationId = conversationId;
+          this.switchToConversationRoom(conversationId);
+        }
       }
     });
 
