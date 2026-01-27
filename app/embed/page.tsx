@@ -557,6 +557,20 @@ export default function EmbedPage() {
       wsRef.current = new ChatWebSocketNative(tid, {
         onMessage: (message) => {
           setMessages((prev) => {
+            // Debug: Log raw message received
+            console.log('[Widget] Raw message received in onMessage:', {
+              hasText: !!message.text,
+              hasMessageText: !!message.message_text,
+              text: message.text,
+              message_text: message.message_text,
+              id: message.id,
+              message_id: message.message_id,
+              messageId: message.messageId,
+              sender_type: message.sender_type,
+              sender: message.sender,
+              allKeys: Object.keys(message)
+            });
+            
             // Normalize message format - ensure sender type is consistent
             // Handle different server formats (sender_type, sender, etc.)
             let normalizedMessage = { ...message };
@@ -575,6 +589,14 @@ export default function EmbedPage() {
             } else if (!normalizedMessage.text && message.text) {
               normalizedMessage.text = message.text;
             }
+            
+            // Debug: Log normalized message
+            console.log('[Widget] Normalized message:', {
+              text: normalizedMessage.text,
+              id: normalizedMessage.id,
+              sender: normalizedMessage.sender,
+              timestamp: normalizedMessage.timestamp
+            });
             
             // Priority: sender_type > sender > default
             if (message.sender_type) {
@@ -617,6 +639,14 @@ export default function EmbedPage() {
             // message:new events have: id (event ID), message_id (actual message ID)
             // meta_message_created events have: messageId (actual message ID)
             const messageId = normalizedMessage.id || (message as any).messageId || (message as any).message_id;
+            console.log('[Widget] STEP 1 - Checking for duplicate by ID:', {
+              messageId,
+              normalizedId: normalizedMessage.id,
+              message_messageId: (message as any).messageId,
+              message_message_id: (message as any).message_id,
+              existingMessageIds: prev.map(m => m.id)
+            });
+            
             if (messageId) {
               const existingById = prev.find((m) => {
                 // Check if any existing message has the same ID
@@ -629,9 +659,13 @@ export default function EmbedPage() {
               });
               if (existingById) {
                 // Message with this ID already exists - just update it (don't add duplicate)
-                console.log('[Widget] Message with ID already exists, skipping duplicate:', messageId);
+                console.log('[Widget] STEP 1 - Message with ID already exists, skipping duplicate:', messageId);
                 return prev; // Don't add duplicate, just return existing messages
+              } else {
+                console.log('[Widget] STEP 1 - No duplicate found by ID, proceeding to STEP 2');
               }
+            } else {
+              console.log('[Widget] STEP 1 - No message ID found, proceeding to STEP 2');
             }
 
             // STEP 2: If message has a real ID (not temp) and we have a pending message with same text
