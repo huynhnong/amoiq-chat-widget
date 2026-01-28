@@ -214,12 +214,43 @@ export class ChatWebSocketNative {
         reconnectionDelayMax: 5000,
       });
 
+      // 🔍 DEBUG: Listen to ALL events to see what's actually being received
+      this.socket.onAny((eventName: string, ...args: any[]) => {
+        console.log('[Socket.IO] 🔍 DEBUG - Received ANY event:', {
+          eventName,
+          argsCount: args.length,
+          firstArg: args[0],
+          firstArgType: typeof args[0],
+          firstArgKeys: args[0] && typeof args[0] === 'object' ? Object.keys(args[0]) : 'N/A',
+        });
+      });
+
+      // Decode JWT token to see session ID in token
+      try {
+        const base64Url = wsToken.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(atob(base64).split('').map((c) => {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        const tokenPayload = JSON.parse(jsonPayload);
+        console.log('[Socket.IO] DEBUG - JWT token payload:', {
+          sessionId: tokenPayload.sessionId || tokenPayload.session_id,
+          userId: tokenPayload.userId || tokenPayload.user_id || tokenPayload.sub,
+          tenantId: tokenPayload.tenantId || tokenPayload.tenant_id,
+          fullPayload: tokenPayload,
+        });
+      } catch (e) {
+        console.warn('[Socket.IO] DEBUG - Could not decode token:', e);
+      }
+
       // Set up event listeners
       this.setupPresenceEventListeners();
       
       // Wait for connection and join session room
       this.socket.on('connect', () => {
         console.log('[Socket.IO] ✅ Presence WebSocket connected');
+        console.log('[Socket.IO] DEBUG - Socket ID:', this.socket?.id);
+        console.log('[Socket.IO] DEBUG - Session ID being used:', sessionId);
         this.reconnectAttempts = 0;
         
         // Join session room for presence tracking
@@ -228,6 +259,11 @@ export class ChatWebSocketNative {
           console.log('[Socket.IO] Joining presence room:', roomName);
           this.socket.emit('join:session', { sessionId });
           this.currentRoom = roomName;
+          
+          // Listen for join confirmation
+          this.socket.once('joined', (data: any) => {
+            console.log('[Socket.IO] ✅ Confirmed joined room:', data);
+          });
         }
         
         this.callbacks.onConnect?.();
