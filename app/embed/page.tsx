@@ -739,6 +739,21 @@ export default function EmbedPage() {
 
   // Handle chat bubble click
   const handleChatBubbleClick = async () => {
+    // Wait for presence session if it's still initializing
+    if (!presenceSession) {
+      console.log('[Widget] Presence session not ready, waiting for initialization...');
+      // Wait up to 5 seconds for presence session
+      let attempts = 0;
+      while (!presenceSession && attempts < 50) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+      if (!presenceSession) {
+        console.error('[Widget] Cannot open chat: presence session initialization timeout');
+        return;
+      }
+    }
+    
     if (!apiRef.current || !presenceSession) {
       console.warn('[Widget] Cannot open chat: presence session not initialized');
       return;
@@ -1005,6 +1020,33 @@ export default function EmbedPage() {
             }];
           });
         }
+        
+        // 🔍 IMPORTANT: After sending via HTTP API, ensure WebSocket is in conversation room
+        // The HTTP API might have created/updated a conversation, so we need to join the conversation room
+        // to receive meta_message_created events
+        // Check for conversation_id in response message or use stored one
+        const conversationId = response.message?.conversation_id || getConversationId();
+        
+        if (conversationId && wsRef.current) {
+          if (wsRef.current.isConnected()) {
+            console.log('[Widget] After HTTP send, switching WebSocket to conversation room:', conversationId);
+            // Switch to conversation room to receive meta_message_created events
+            wsRef.current.switchToConversationRoom(conversationId);
+          } else {
+            console.warn('[Widget] WebSocket not connected, cannot join conversation room:', conversationId);
+            console.log('[Widget] WebSocket connection status:', {
+              isConnected: wsRef.current.isConnected(),
+              hasSocket: !!wsRef.current,
+            });
+          }
+        } else {
+          console.warn('[Widget] No conversation ID available after sending message', {
+            hasResponseMessage: !!response.message,
+            hasConversationIdInMessage: !!response.message?.conversation_id,
+            storedConversationId: getConversationId(),
+          });
+        }
+        
         // Message remains as 'pending' - WebSocket will update to 'delivered' when meta_message_created is received
       } else if (wsRef.current && (isConnected || wsRef.current.isConnected())) {
         // Fallback to WebSocket if HTTP API is not available
