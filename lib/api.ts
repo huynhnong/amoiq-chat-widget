@@ -321,16 +321,26 @@ export class ChatAPI {
       }
 
       // Retry logic for production
+      // IMPORTANT: maxRetries = 2 means 1 initial + 1 retry (total 2 attempts)
+      // This prevents excessive duplicate API calls on network issues
+      // The API has temp_id deduplication, but we should minimize calls
       let lastError: Error | null = null;
-      const maxRetries = 3;
+      const maxRetries = 2;
       
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
+          // Add timeout to prevent hanging requests (15 seconds)
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000);
+          
           const response = await fetch(`${this.baseUrl}/webchat/message`, {
             method: 'POST',
             headers: this.getHeaders(),
             body: JSON.stringify(payload),
+            signal: controller.signal,
           });
+          
+          clearTimeout(timeoutId);
 
           if (!response.ok) {
             const errorText = await response.text().catch(() => response.statusText);
