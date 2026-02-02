@@ -233,6 +233,32 @@
   cursor: not-allowed;
 }
 
+.attachButton {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #f3f4f6;
+  color: #6b7280;
+  border: 1px solid #e5e7eb;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+  flex-shrink: 0;
+}
+
+.attachButton:hover:not(:disabled) {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.attachButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .sendButton {
   width: 44px;
   height: 44px;

@@ -5,6 +5,7 @@ import { getTenantId } from '@/lib/tenant';
 import { ChatAPI, UserInfo } from '@/lib/api';
 import { ChatWebSocketNative } from '@/lib/ws-native';
 import { getSessionInfo, hasValidSession, getVisitorId, isConversationExpired, clearConversation, getSenderName, setSenderName, getConversationId } from '@/lib/session';
+import { UploadService } from '@/lib/upload-service';
 import styles from './styles.module.css';
 
 // Force dynamic rendering - no caching
@@ -118,6 +119,8 @@ export default function EmbedPage() {
   const [senderName, setSenderNameState] = useState<string | null>(null);
   const [conversationClosed, setConversationClosed] = useState(false);
   const [nameInputValue, setNameInputValue] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [showClearButton, setShowClearButton] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -983,6 +986,51 @@ export default function EmbedPage() {
     }
   };
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const conversationId = getConversationId();
+    if (!conversationId) {
+      alert('Send a message first to attach files.');
+      return;
+    }
+    if (!apiRef.current) return;
+    setIsUploading(true);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_GATEWAY_URL || process.env.NEXT_PUBLIC_API_URL || 'https://api-gateway-dfcflow.fly.dev';
+      const uploadService = new UploadService(baseUrl, () => ({
+        'Content-Type': 'application/json',
+        ...(process.env.NEXT_PUBLIC_GATEWAY_API_KEY || process.env.NEXT_PUBLIC_API_KEY
+          ? { Authorization: `Bearer ${process.env.NEXT_PUBLIC_GATEWAY_API_KEY || process.env.NEXT_PUBLIC_API_KEY}` }
+          : {}),
+      }));
+      const result = await uploadService.uploadFile(conversationId, file);
+      const type = (file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'document') as 'image' | 'video' | 'audio' | 'document';
+      const tempId = `temp-${Date.now()}`;
+      const userMessage: Message = {
+        id: tempId,
+        text: `[Attachment: ${result.filename}]`,
+        sender: 'user',
+        timestamp: new Date().toISOString(),
+        deliveryStatus: 'pending',
+      };
+      setMessages((prev) => [...prev, userMessage]);
+      const response = await apiRef.current.sendMessage('', {
+        temp_id: tempId,
+        attachments: {
+          items: [{ type, payload: { url: result.publicUrl, filename: result.filename, content_type: result.contentType, size: result.size } }],
+        },
+      });
+      if (!response.success) throw new Error(response.error);
+    } catch (err) {
+      console.error('[Widget] File upload failed:', err);
+      alert(err instanceof Error ? err.message : 'Failed to upload file.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleClose = () => {
     // Notify parent window to close widget
     if (window.parent) {
@@ -1111,6 +1159,26 @@ export default function EmbedPage() {
           </>
         ) : (
           <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,video/*,audio/*,.pdf"
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+              aria-hidden
+            />
+            {getConversationId() && (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading || isUploading}
+                className={styles.attachButton}
+                aria-label="Attach file"
+                title="Attach image, video, audio, or PDF"
+              >
+                {isUploading ? '…' : '📎'}
+              </button>
+            )}
             <input
               type="text"
               value={inputValue}

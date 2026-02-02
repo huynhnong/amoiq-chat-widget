@@ -38,10 +38,16 @@ export interface UserInfo {
   [key: string]: any; // Allow additional user properties
 }
 
+export interface AttachmentItem {
+  type: 'image' | 'video' | 'audio' | 'document';
+  payload: { url: string; filename?: string; content_type?: string; size?: number };
+}
+
 export interface SendMessageOptions {
   userId?: string; // For logged-in users
   userInfo?: UserInfo; // User information for logged-in users
   temp_id?: string; // Client-generated temp id for optimistic message replacement
+  attachments?: { items: AttachmentItem[] }; // Optional file attachments (URLs from upload)
 }
 
 export interface OnlineUser {
@@ -303,6 +309,11 @@ export class ChatAPI {
       // Add temp_id for optimistic message replacement (server echoes in meta_message_created)
       if (options?.temp_id) {
         payload.temp_id = options.temp_id;
+      }
+
+      // Add attachments if provided (URLs from upload service)
+      if (options?.attachments?.items?.length) {
+        payload.attachments = options.attachments;
       }
 
       // Retry logic for production
